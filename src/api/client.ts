@@ -7,7 +7,7 @@ import {
   Room,
   TenantRegistration
 } from '../types';
-import { calcLateFeeSatang, calcMeterUnits, formatBaht } from '../lib/finance';
+import { calcLateFeeSatang, calcMeterUnits, calcNextDueDate, calcProratedRentSatang, formatBaht } from '../lib/finance';
 import { saveStateToFirestore } from '../lib/firebase';
 
 export function createDayOneState(): AppState {
@@ -279,7 +279,9 @@ async function persistState(state: AppState): Promise<AppState> {
   }
   const next = normalizeState(cloneState(state));
   next.lastBackupDate = new Date().toISOString();
-  await saveStateToFirestore(next);
+  if (process.env.NODE_ENV !== 'test') {
+    await saveStateToFirestore(next);
+  }
   cachedState = next;
   return cloneState(next);
 }
@@ -365,6 +367,45 @@ export async function submitMoveIn(payload: any): Promise<AppState> {
     rm.prevElec = Number(initElec) || 0;
     rm.currElec = Number(initElec) || 0;
     rm.arrearsSatang = 0;
+
+    // B8: If tenant moved in and prorated rent is chosen, issue initial move-in invoice
+    if (payload.useProrate && payload.startDate) {
+      const pro = calcProratedRentSatang(finalRentSatang, payload.startDate, state.settings.billingDay);
+      const period = (payload.startDate || state.simulatedDate).substring(0, 7);
+      const nextDue = calcNextDueDate(payload.startDate || state.simulatedDate, state.settings.dueDayNextMonth || 5);
+      const parkingFee = Number(parkingFeeSatang) || 0;
+      const totalMoveInSatang = pro.proratedAmountSatang + parkingFee;
+
+      state.invoices.push({
+        id: `INV-${period.replace('-', '')}-${rm.roomNumber}-PRORATE`,
+        roomNumber: rm.roomNumber,
+        tenantName: rm.tenantName,
+        tier: rm.tier,
+        billingPeriod: period,
+        issueDate: payload.startDate || state.simulatedDate,
+        dueDate: nextDue,
+        rentSatang: pro.proratedAmountSatang,
+        parkingType: rm.parkingType,
+        parkingFeeSatang: parkingFee,
+        prevWater: rm.prevWater,
+        currWater: rm.currWater,
+        waterRoll: false,
+        waterUnits: 0,
+        waterSatang: 0,
+        prevElec: rm.prevElec,
+        currElec: rm.currElec,
+        elecRoll: false,
+        elecUnits: 0,
+        elecSatang: 0,
+        arrearsSatang: 0,
+        lateFeeSatang: 0,
+        totalSatang: totalMoveInSatang,
+        paidSatang: 0,
+        balanceDueSatang: totalMoveInSatang,
+        status: 'ISSUED',
+        payments: []
+      });
+    }
   }
 
   return persistState(state);
@@ -431,9 +472,15 @@ export async function commitBulkMeters(readings: any[]): Promise<AppState> {
       const rm = state.rooms.find(r => r.roomNumber === rd.roomNumber);
       if (!rm || rm.status !== 'OCCUPIED') return;
 
-      rm.currWater = Number(rd.currWater) || rm.currWater;
+      if (rd.prevWater !== undefined && rd.prevWater !== null) {
+        rm.prevWater = Number(rd.prevWater);
+      }
+      if (rd.prevElec !== undefined && rd.prevElec !== null) {
+        rm.prevElec = Number(rd.prevElec);
+      }
+      rm.currWater = rd.currWater !== undefined && rd.currWater !== null ? Number(rd.currWater) : rm.currWater;
       rm.waterRoll = Boolean(rd.waterRoll);
-      rm.currElec = Number(rd.currElec) || rm.currElec;
+      rm.currElec = rd.currElec !== undefined && rd.currElec !== null ? Number(rd.currElec) : rm.currElec;
       rm.elecRoll = Boolean(rd.elecRoll);
 
       const wUnits = calcMeterUnits(rm.prevWater, rm.currWater, rm.waterRoll);
@@ -447,10 +494,25 @@ export async function commitBulkMeters(readings: any[]): Promise<AppState> {
       );
       const totalSatang = rm.rentSatang + wSatang + eSatang + parkingSatang + (rm.arrearsSatang || 0);
 
+      // B3: Mark previous unpaid invoices for this room as ROLLED_OVER to avoid double counting arrears
+      state.invoices.forEach(oldInv => {
+        if (
+          oldInv.roomNumber === rm.roomNumber &&
+          oldInv.billingPeriod !== period &&
+          oldInv.balanceDueSatang > 0 &&
+          oldInv.status !== 'ROLLED_OVER'
+        ) {
+          oldInv.status = 'ROLLED_OVER';
+        }
+      });
+
+      const nextDueDate = calcNextDueDate(state.simulatedDate, s.dueDayNextMonth || 5);
+
       if (inv) {
         inv.rentSatang = rm.rentSatang;
         inv.parkingType = rm.parkingType;
         inv.parkingFeeSatang = parkingSatang;
+        inv.dueDate = nextDueDate;
         inv.prevWater = rm.prevWater;
         inv.currWater = rm.currWater;
         inv.waterRoll = rm.waterRoll;
@@ -473,7 +535,7 @@ export async function commitBulkMeters(readings: any[]): Promise<AppState> {
           tier: rm.tier,
           billingPeriod: period,
           issueDate: state.simulatedDate,
-          dueDate: `${period}-05`,
+          dueDate: nextDueDate,
           rentSatang: rm.rentSatang,
           parkingType: rm.parkingType,
           parkingFeeSatang: parkingSatang,
@@ -497,6 +559,12 @@ export async function commitBulkMeters(readings: any[]): Promise<AppState> {
           payments: []
         });
       }
+
+      // B1: Advance meter base readings for the next cycle and reset rollover flags
+      rm.prevWater = rm.currWater;
+      rm.prevElec = rm.currElec;
+      rm.waterRoll = false;
+      rm.elecRoll = false;
     });
   }
 
@@ -570,9 +638,13 @@ export async function recordPayment(payload: {
 }): Promise<AppState> {
   const state = await getActiveState();
   const { invoiceId, amountSatang, method, slipNote } = payload;
+  const paySatang = Number(amountSatang) || 0;
+  if (paySatang <= 0) {
+    throw new Error('จำนวนเงินที่ชำระต้องมากกว่า 0 บาท');
+  }
+
   const inv = state.invoices.find(i => i.id === invoiceId);
   if (inv) {
-    const paySatang = Number(amountSatang) || 0;
     const lateSatang = calcLateFeeSatang(inv, state.simulatedDate, state.settings);
 
     if (lateSatang > 0 && inv.lateFeeSatang === 0) {
@@ -613,20 +685,24 @@ export async function submitMoveOut(payload: any): Promise<{ state: AppState; ne
 
   if (rm) {
     const s = state.settings;
-    const cW = Number(currWater) || rm.currWater;
-    const cE = Number(currElec) || rm.currElec;
-    const wUnits = Math.max(0, cW - rm.currWater);
-    const eUnits = Math.max(0, cE - rm.currElec);
-    const finalWaterSatang = wUnits * s.waterRateSatang;
-    const finalElectricSatang = eUnits * s.electricityRateSatang;
+    const cW = Number(currWater) >= 0 ? Number(currWater) : rm.currWater;
+    const cE = Number(currElec) >= 0 ? Number(currElec) : rm.currElec;
+    const wUnits = calcMeterUnits(rm.currWater, cW, false);
+    const eUnits = calcMeterUnits(rm.currElec, cE, false);
+    const finalWaterSatang = Math.max(0, wUnits) * s.waterRateSatang;
+    const finalElectricSatang = Math.max(0, eUnits) * s.electricityRateSatang;
     const cleaningSatang = Number(cleaningFeeSatang) || 0;
     const damageSatang = Number(damageFeeSatang) || 0;
 
-    const inv = state.invoices.find(
+    // Sum all unpaid active balances for this room
+    const unpaidInvoices = state.invoices.filter(
       i => i.roomNumber === roomNumber && i.status !== 'ROLLED_OVER' && i.balanceDueSatang > 0
     );
-    const arrearsSatang = inv ? inv.balanceDueSatang : rm.arrearsSatang || 0;
-    const depositHeldSatang = rm.depositSatang || s.tierGoldSatang;
+    const totalInvoiceArrears = unpaidInvoices.reduce((sum, inv) => sum + inv.balanceDueSatang, 0);
+    const arrearsSatang = Math.max(totalInvoiceArrears, rm.arrearsSatang || 0);
+
+    // B4: Use actual deposit (if 0 then 0, do not invent 3,500 THB)
+    const depositHeldSatang = rm.depositSatang || 0;
     const totalDeductions = finalWaterSatang + finalElectricSatang + cleaningSatang + damageSatang + arrearsSatang;
     netRefundSatang = depositHeldSatang - totalDeductions;
 
@@ -666,9 +742,16 @@ export async function submitMoveOut(payload: any): Promise<{ state: AppState; ne
       createdAt: new Date().toISOString()
     });
 
-    if (inv) {
-      inv.status = 'PAID';
-      inv.balanceDueSatang = 0;
+    // Only close invoices if deposit was sufficient to clear them
+    if (netRefundSatang >= 0) {
+      unpaidInvoices.forEach(inv => {
+        inv.status = 'PAID';
+        inv.balanceDueSatang = 0;
+      });
+      rm.arrearsSatang = 0;
+    } else {
+      // Tenant still owes money after deducting deposit
+      rm.arrearsSatang = Math.abs(netRefundSatang);
     }
 
     rm.status = 'AVAILABLE';
@@ -682,7 +765,6 @@ export async function submitMoveOut(payload: any): Promise<{ state: AppState; ne
     rm.currWater = cW;
     rm.prevElec = cE;
     rm.currElec = cE;
-    rm.arrearsSatang = 0;
   }
 
   const nextState = await persistState(state);
@@ -744,15 +826,17 @@ export async function testLineConnection(
     if (lineRes.ok) {
       const botInfo = await lineRes.json();
       return { success: true, botInfo };
+    } else {
+      const err = await lineRes.text();
+      return { success: false, error: `LINE API Error (${lineRes.status}): ${err}` };
     }
-  } catch {
-    // CORS on browser when hitting api.line.me directly
+  } catch (err: any) {
+    // Note: Calling LINE API directly from browser will hit CORS restriction
+    return {
+      success: false,
+      error: 'เบราว์เซอร์ไม่สามารถเรียก LINE API ได้โดยตรงเนื่องจากติด CORS Policy (Token ได้ถูกบันทึกลงระบบแล้ว และจะถูกใช้เมื่อส่งผ่าน Backend/Webhook)'
+    };
   }
-
-  return {
-    success: true,
-    botInfo: { displayName: 'Taky Apartment LINE OA (Verified Token)', basicId: '@takyapartment' }
-  };
 }
 
 export async function sendLineNotification(
@@ -775,10 +859,12 @@ export async function sendLineNotification(
   const lateSatang = calcLateFeeSatang(inv, state.simulatedDate, s);
   const netDue = inv.balanceDueSatang + lateSatang;
 
+  const dueText = inv.dueDate ? ` (กำหนดชำระภายใน ${inv.dueDate})` : '';
+
   const messageText = [
     `🏢 แจ้งบิลค่าเช่า ${s.apartmentName} — ห้อง ${inv.roomNumber}`,
     `ผู้เช่า: ${inv.tenantName} (แพ็กเกจ ${inv.tier})`,
-    `รอบตัดบิล: ${inv.issueDate} (กำหนดชำระภายใน 5 พ.ย.)`,
+    `รอบตัดบิล: ${inv.issueDate}${dueText}`,
     `--------------------------------`,
     `• ค่าเช่าห้องพัก: ${formatBaht(inv.rentSatang)} บาท`,
     inv.parkingFeeSatang > 0
@@ -889,38 +975,43 @@ export async function approveReconcile(
   const state = await getActiveState();
   state.formSubmissions = state.formSubmissions || [];
   const sub = state.formSubmissions.find(s => s.id === submissionId);
-  if (sub) {
-    let inv = invoiceId ? state.invoices.find(i => i.id === invoiceId) : undefined;
-    if (!inv) {
-      inv = state.invoices.find(i => i.roomNumber === sub.roomNumber && i.balanceDueSatang > 0);
-    }
-
-    if (inv) {
-      const payRecord: PaymentRecord = {
-        id: 'PAY-' + Date.now(),
-        paidAt: `${sub.transferDate} ${sub.transferTime}`,
-        amountSatang: sub.amountSatang,
-        method: 'โอนผ่านธนาคาร',
-        slipNote: note || `อนุมัติจาก Google Form (${sub.transferDate} ${sub.transferTime})`
-      };
-
-      inv.payments.push(payRecord);
-      inv.paidSatang += sub.amountSatang;
-      inv.balanceDueSatang = Math.max(0, inv.totalSatang - inv.paidSatang);
-      inv.status = inv.balanceDueSatang === 0 ? 'PAID' : 'PARTIAL';
-
-      const rm = state.rooms.find(r => r.roomNumber === inv?.roomNumber);
-      if (rm && inv.balanceDueSatang === 0) {
-        rm.arrearsSatang = 0;
-      }
-
-      sub.matchedInvoiceId = inv.id;
-    }
-
-    sub.status = 'RECONCILED';
-    sub.reconciledAt = new Date().toISOString();
-    sub.adminNote = note || 'ยืนยันยอดเงินเข้าบัญชีเรียบร้อย';
+  if (!sub) {
+    throw new Error('ไม่พบรายการแจ้งโอนนี้');
   }
+  if (sub.status !== 'PENDING') {
+    throw new Error('รายการแจ้งโอนนี้ได้รับการดำเนินการไปแล้ว ไม่สามารถดำเนินการซ้ำได้');
+  }
+
+  let inv = invoiceId ? state.invoices.find(i => i.id === invoiceId) : undefined;
+  if (!inv) {
+    inv = state.invoices.find(i => i.roomNumber === sub.roomNumber && i.balanceDueSatang > 0);
+  }
+
+  if (inv) {
+    const payRecord: PaymentRecord = {
+      id: 'PAY-' + Date.now(),
+      paidAt: `${sub.transferDate} ${sub.transferTime}`,
+      amountSatang: sub.amountSatang,
+      method: 'โอนผ่านธนาคาร',
+      slipNote: note || `อนุมัติจาก Google Form (${sub.transferDate} ${sub.transferTime})`
+    };
+
+    inv.payments.push(payRecord);
+    inv.paidSatang += sub.amountSatang;
+    inv.balanceDueSatang = Math.max(0, inv.totalSatang - inv.paidSatang);
+    inv.status = inv.balanceDueSatang === 0 ? 'PAID' : 'PARTIAL';
+
+    const rm = state.rooms.find(r => r.roomNumber === inv?.roomNumber);
+    if (rm && inv.balanceDueSatang === 0) {
+      rm.arrearsSatang = 0;
+    }
+
+    sub.matchedInvoiceId = inv.id;
+  }
+
+  sub.status = 'RECONCILED';
+  sub.reconciledAt = new Date().toISOString();
+  sub.adminNote = note || 'ยืนยันยอดเงินเข้าบัญชีเรียบร้อย';
 
   const nextState = await persistState(state);
   return { success: true, state: nextState };
@@ -933,10 +1024,15 @@ export async function rejectReconcile(
   const state = await getActiveState();
   state.formSubmissions = state.formSubmissions || [];
   const sub = state.formSubmissions.find(s => s.id === submissionId);
-  if (sub) {
-    sub.status = 'REJECTED';
-    sub.adminNote = reason || 'สลิปไม่ตรง / ตรวจสอบไม่พบยอดเงินในบัญชี';
+  if (!sub) {
+    throw new Error('ไม่พบรายการแจ้งโอนนี้');
   }
+  if (sub.status !== 'PENDING') {
+    throw new Error('รายการแจ้งโอนนี้ได้รับการดำเนินการไปแล้ว');
+  }
+
+  sub.status = 'REJECTED';
+  sub.adminNote = reason || 'สลิปไม่ตรง / ตรวจสอบไม่พบยอดเงินในบัญชี';
 
   const nextState = await persistState(state);
   return { success: true, state: nextState };
@@ -983,45 +1079,58 @@ export async function approveRegistration(payload: any): Promise<{ success: bool
   state.registrations = state.registrations || [];
   const reg = state.registrations.find(r => r.id === registrationId);
 
-  if (reg) {
-    const targetRoom = roomNumber || reg.requestedRoomNumber;
-    const rm = state.rooms.find(r => r.roomNumber === targetRoom);
-    if (rm && rm.status !== 'OCCUPIED') {
-      const mult = depositMonths || state.settings.defaultDepositMonths;
-      const finalRentSatang =
-        Number(rentSatang) ||
-        (tier === 'GOLD'
-          ? state.settings.tierGoldSatang
-          : tier === 'SILVER'
-          ? state.settings.tierSilverSatang
-          : state.settings.tierStandardSatang);
-      const depositSatang = finalRentSatang * mult;
-
-      rm.status = 'OCCUPIED';
-      rm.tenantName = reg.tenantName;
-      rm.phone = reg.phone;
-      rm.lineId = reg.lineId || '';
-      rm.tier = tier || rm.tier || 'STANDARD';
-      rm.rentSatang = finalRentSatang;
-      rm.depositSatang = depositSatang;
-      rm.startDate = reg.plannedMoveInDate || state.simulatedDate;
-      rm.parkingType = reg.vehicleType || 'NONE';
-      rm.parkingFeeSatang =
-        reg.vehicleType === 'CAR'
-          ? state.settings.carParkingRateSatang
-          : reg.vehicleType === 'BIKE'
-          ? state.settings.bikeParkingRateSatang
-          : 0;
-      rm.prevWater = Number(initWater) || rm.currWater || 0;
-      rm.currWater = Number(initWater) || rm.currWater || 0;
-      rm.prevElec = Number(initElec) || rm.currElec || 0;
-      rm.currElec = Number(initElec) || rm.currElec || 0;
-      rm.arrearsSatang = 0;
-
-      reg.status = 'APPROVED';
-      reg.approvedAt = new Date().toISOString();
-    }
+  if (!reg) {
+    throw new Error('ไม่พบรายการลงทะเบียนนี้');
   }
+  if (reg.status !== 'PENDING') {
+    throw new Error('คำขอนี้ได้รับการประมวลผลไปแล้ว');
+  }
+
+  const targetRoom = roomNumber || reg.requestedRoomNumber;
+  const rm = state.rooms.find(r => r.roomNumber === targetRoom);
+  if (!rm) {
+    throw new Error('ไม่พบห้องพักที่ระบุ');
+  }
+  if (rm.status === 'OCCUPIED') {
+    throw new Error(`ห้อง ${targetRoom} มีผู้เช่าอยู่แล้วในปัจจุบัน`);
+  }
+  if (rm.status === 'RESERVED' && rm.phone && rm.phone !== reg.phone) {
+    throw new Error(`ห้อง ${targetRoom} มีผู้จองไว้แล้ว (${rm.tenantName})`);
+  }
+
+  const mult = depositMonths || state.settings.defaultDepositMonths;
+  const finalRentSatang =
+    Number(rentSatang) ||
+    (tier === 'GOLD'
+      ? state.settings.tierGoldSatang
+      : tier === 'SILVER'
+      ? state.settings.tierSilverSatang
+      : state.settings.tierStandardSatang);
+  const depositSatang = finalRentSatang * mult;
+
+  rm.status = 'OCCUPIED';
+  rm.tenantName = reg.tenantName;
+  rm.phone = reg.phone;
+  rm.lineId = reg.lineId || '';
+  rm.tier = tier || rm.tier || 'STANDARD';
+  rm.rentSatang = finalRentSatang;
+  rm.depositSatang = depositSatang;
+  rm.startDate = reg.plannedMoveInDate || state.simulatedDate;
+  rm.parkingType = reg.vehicleType || 'NONE';
+  rm.parkingFeeSatang =
+    reg.vehicleType === 'CAR'
+      ? state.settings.carParkingRateSatang
+      : reg.vehicleType === 'BIKE'
+      ? state.settings.bikeParkingRateSatang
+      : 0;
+  rm.prevWater = Number(initWater) || rm.currWater || 0;
+  rm.currWater = Number(initWater) || rm.currWater || 0;
+  rm.prevElec = Number(initElec) || rm.currElec || 0;
+  rm.currElec = Number(initElec) || rm.currElec || 0;
+  rm.arrearsSatang = 0;
+
+  reg.status = 'APPROVED';
+  reg.approvedAt = new Date().toISOString();
 
   const nextState = await persistState(state);
   return { success: true, state: nextState };
@@ -1034,10 +1143,15 @@ export async function rejectRegistration(
   const state = await getActiveState();
   state.registrations = state.registrations || [];
   const reg = state.registrations.find(r => r.id === registrationId);
-  if (reg) {
-    reg.status = 'REJECTED';
-    reg.adminNote = reason || 'ยกเลิก / ไม่ผ่านการอนุมัติ';
+  if (!reg) {
+    throw new Error('ไม่พบรายการลงทะเบียนนี้');
   }
+  if (reg.status !== 'PENDING') {
+    throw new Error('คำขอนี้ได้รับการประมวลผลไปแล้ว');
+  }
+
+  reg.status = 'REJECTED';
+  reg.adminNote = reason || 'ยกเลิก / ไม่ผ่านการอนุมัติ';
 
   const nextState = await persistState(state);
   return { success: true, state: nextState };

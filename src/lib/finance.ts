@@ -60,6 +60,22 @@ export function calcProratedRentSatang(
 }
 
 /**
+ * Calculate next month due date (e.g. 2026-10-25 -> 2026-11-05, 2026-12-25 -> 2027-01-05)
+ */
+export function calcNextDueDate(issueDateStr: string, dueDay: number = 5): string {
+  const parts = (issueDateStr || '').split('-');
+  const year = parseInt(parts[0], 10) || 2026;
+  const month = parseInt(parts[1], 10) || 1;
+
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextYear = month === 12 ? year + 1 : year;
+
+  const mm = String(nextMonth).padStart(2, '0');
+  const dd = String(dueDay).padStart(2, '0');
+  return `${nextYear}-${mm}-${dd}`;
+}
+
+/**
  * Late fee calculation after the 5th of following month
  * Rule: daily fee * days past due date (only if balance due > 0 and status is not PAID)
  */

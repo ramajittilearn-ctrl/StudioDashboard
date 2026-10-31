@@ -279,6 +279,7 @@ export function createBackupSnapshot(state: AppState, tag: 'DAY_ONE' | 'WEEKLY_A
     const backupId = `SNAP-${Date.now()}`;
     const name = customName || (tag === 'WEEKLY_AUTO' ? `สำรองรายสัปดาห์อัตโนมัติ (${now.toLocaleDateString('th-TH')})` : `สำรองข้อมูลโดย Admin (${now.toLocaleTimeString('th-TH')})`);
 
+    const cleanState = { ...state, backups: [] };
     const snapshot = {
       id: backupId,
       timestamp: now.toISOString(),
@@ -286,7 +287,7 @@ export function createBackupSnapshot(state: AppState, tag: 'DAY_ONE' | 'WEEKLY_A
       tag,
       roomsCount: state.rooms.length,
       invoicesCount: state.invoices.length,
-      stateData: JSON.stringify(state)
+      stateData: JSON.stringify(cleanState)
     };
 
     state.backups = state.backups || [];

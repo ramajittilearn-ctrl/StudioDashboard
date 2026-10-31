@@ -2,7 +2,7 @@ import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { createBackupSnapshot, createDayOneState, createInitialSeedState, loadAppState, saveAppState } from './src/server/storage';
-import { calcLateFeeSatang, calcMeterUnits, calcProratedRentSatang, formatBaht } from './src/lib/finance';
+import { calcLateFeeSatang, calcMeterUnits, calcNextDueDate, calcProratedRentSatang, formatBaht } from './src/lib/finance';
 import { FormSubmission, Invoice, MoveOutArchive, PaymentRecord, TenantRegistration } from './src/types';
 
 async function startServer() {
@@ -109,6 +109,45 @@ async function startServer() {
     rm.currElec = Number(initElec) || 0;
     rm.arrearsSatang = 0;
 
+    // B8: If tenant moved in and prorated rent is chosen, issue initial move-in invoice
+    if (useProrate && startDate) {
+      const pro = calcProratedRentSatang(finalRentSatang, startDate, state.settings.billingDay);
+      const period = (startDate || state.simulatedDate).substring(0, 7);
+      const nextDue = calcNextDueDate(startDate || state.simulatedDate, state.settings.dueDayNextMonth || 5);
+      const parkingFee = Number(parkingFeeSatang) || 0;
+      const totalMoveInSatang = pro.proratedAmountSatang + parkingFee;
+
+      state.invoices.push({
+        id: `INV-${period.replace('-', '')}-${rm.roomNumber}-PRORATE`,
+        roomNumber: rm.roomNumber,
+        tenantName: rm.tenantName,
+        tier: rm.tier,
+        billingPeriod: period,
+        issueDate: startDate || state.simulatedDate,
+        dueDate: nextDue,
+        rentSatang: pro.proratedAmountSatang,
+        parkingType: rm.parkingType,
+        parkingFeeSatang: parkingFee,
+        prevWater: rm.prevWater,
+        currWater: rm.currWater,
+        waterRoll: false,
+        waterUnits: 0,
+        waterSatang: 0,
+        prevElec: rm.prevElec,
+        currElec: rm.currElec,
+        elecRoll: false,
+        elecUnits: 0,
+        elecSatang: 0,
+        arrearsSatang: 0,
+        lateFeeSatang: 0,
+        totalSatang: totalMoveInSatang,
+        paidSatang: 0,
+        balanceDueSatang: totalMoveInSatang,
+        status: 'ISSUED',
+        payments: []
+      });
+    }
+
     saveAppState(state);
     res.json({ success: true, state });
   });
@@ -175,9 +214,15 @@ async function startServer() {
         const rm = state.rooms.find(r => r.roomNumber === rd.roomNumber);
         if (!rm || rm.status !== 'OCCUPIED') return;
 
-        rm.currWater = Number(rd.currWater) || rm.currWater;
+        if (rd.prevWater !== undefined && rd.prevWater !== null) {
+          rm.prevWater = Number(rd.prevWater);
+        }
+        if (rd.prevElec !== undefined && rd.prevElec !== null) {
+          rm.prevElec = Number(rd.prevElec);
+        }
+        rm.currWater = rd.currWater !== undefined && rd.currWater !== null ? Number(rd.currWater) : rm.currWater;
         rm.waterRoll = Boolean(rd.waterRoll);
-        rm.currElec = Number(rd.currElec) || rm.currElec;
+        rm.currElec = rd.currElec !== undefined && rd.currElec !== null ? Number(rd.currElec) : rm.currElec;
         rm.elecRoll = Boolean(rd.elecRoll);
 
         const wUnits = calcMeterUnits(rm.prevWater, rm.currWater, rm.waterRoll);
@@ -189,10 +234,25 @@ async function startServer() {
         let inv = state.invoices.find(i => i.roomNumber === rm.roomNumber && i.billingPeriod === period && i.status !== 'ROLLED_OVER');
         const totalSatang = rm.rentSatang + wSatang + eSatang + parkingSatang + (rm.arrearsSatang || 0);
 
+        // B3: Mark previous unpaid invoices for this room as ROLLED_OVER
+        state.invoices.forEach(oldInv => {
+          if (
+            oldInv.roomNumber === rm.roomNumber &&
+            oldInv.billingPeriod !== period &&
+            oldInv.balanceDueSatang > 0 &&
+            oldInv.status !== 'ROLLED_OVER'
+          ) {
+            oldInv.status = 'ROLLED_OVER';
+          }
+        });
+
+        const nextDueDate = calcNextDueDate(state.simulatedDate, s.dueDayNextMonth || 5);
+
         if (inv) {
           inv.rentSatang = rm.rentSatang;
           inv.parkingType = rm.parkingType;
           inv.parkingFeeSatang = parkingSatang;
+          inv.dueDate = nextDueDate;
           inv.prevWater = rm.prevWater;
           inv.currWater = rm.currWater;
           inv.waterRoll = rm.waterRoll;
@@ -215,7 +275,7 @@ async function startServer() {
             tier: rm.tier,
             billingPeriod: period,
             issueDate: state.simulatedDate,
-            dueDate: `${period}-05`, // Due on 5th
+            dueDate: nextDueDate, // Due on 5th next month
             rentSatang: rm.rentSatang,
             parkingType: rm.parkingType,
             parkingFeeSatang: parkingSatang,
@@ -239,6 +299,12 @@ async function startServer() {
             payments: []
           });
         }
+
+        // B1: Advance meter readings for the next cycle and reset roll flags
+        rm.prevWater = rm.currWater;
+        rm.prevElec = rm.currElec;
+        rm.waterRoll = false;
+        rm.elecRoll = false;
       });
     }
 
@@ -303,10 +369,13 @@ async function startServer() {
   // 10. Record Payment (Full or Partial)
   app.post('/api/payments', (req, res) => {
     const { invoiceId, amountSatang, method, slipNote } = req.body;
+    const paySatang = Number(amountSatang) || 0;
+    if (paySatang <= 0) {
+      return res.status(400).json({ error: 'จำนวนเงินที่ชำระต้องมากกว่า 0 บาท' });
+    }
+
     const inv = state.invoices.find(i => i.id === invoiceId);
     if (!inv) return res.status(404).json({ error: 'Invoice not found' });
-
-    const paySatang = Number(amountSatang) || 0;
     const lateSatang = calcLateFeeSatang(inv, state.simulatedDate, state.settings);
 
     if (lateSatang > 0 && inv.lateFeeSatang === 0) {
@@ -346,18 +415,22 @@ async function startServer() {
     if (!rm) return res.status(404).json({ error: 'Room not found' });
 
     const s = state.settings;
-    const cW = Number(currWater) || rm.currWater;
-    const cE = Number(currElec) || rm.currElec;
-    const wUnits = Math.max(0, cW - rm.currWater);
-    const eUnits = Math.max(0, cE - rm.currElec);
-    const finalWaterSatang = wUnits * s.waterRateSatang;
-    const finalElectricSatang = eUnits * s.electricityRateSatang;
+    const cW = Number(currWater) >= 0 ? Number(currWater) : rm.currWater;
+    const cE = Number(currElec) >= 0 ? Number(currElec) : rm.currElec;
+    const wUnits = calcMeterUnits(rm.currWater, cW, false);
+    const eUnits = calcMeterUnits(rm.currElec, cE, false);
+    const finalWaterSatang = Math.max(0, wUnits) * s.waterRateSatang;
+    const finalElectricSatang = Math.max(0, eUnits) * s.electricityRateSatang;
     const cleaningSatang = Number(cleaningFeeSatang) || 0;
     const damageSatang = Number(damageFeeSatang) || 0;
 
-    const inv = state.invoices.find(i => i.roomNumber === roomNumber && i.status !== 'ROLLED_OVER' && i.balanceDueSatang > 0);
-    const arrearsSatang = inv ? inv.balanceDueSatang : (rm.arrearsSatang || 0);
-    const depositHeldSatang = rm.depositSatang || s.tierGoldSatang;
+    const unpaidInvoices = state.invoices.filter(
+      i => i.roomNumber === roomNumber && i.status !== 'ROLLED_OVER' && i.balanceDueSatang > 0
+    );
+    const totalInvoiceArrears = unpaidInvoices.reduce((sum, inv) => sum + inv.balanceDueSatang, 0);
+    const arrearsSatang = Math.max(totalInvoiceArrears, rm.arrearsSatang || 0);
+
+    const depositHeldSatang = rm.depositSatang || 0;
     const totalDeductions = finalWaterSatang + finalElectricSatang + cleaningSatang + damageSatang + arrearsSatang;
     const netRefundSatang = depositHeldSatang - totalDeductions;
 
@@ -397,9 +470,14 @@ async function startServer() {
       createdAt: new Date().toISOString()
     });
 
-    if (inv) {
-      inv.status = 'PAID';
-      inv.balanceDueSatang = 0;
+    if (netRefundSatang >= 0) {
+      unpaidInvoices.forEach(inv => {
+        inv.status = 'PAID';
+        inv.balanceDueSatang = 0;
+      });
+      rm.arrearsSatang = 0;
+    } else {
+      rm.arrearsSatang = Math.abs(netRefundSatang);
     }
 
     rm.status = 'AVAILABLE';
@@ -413,7 +491,6 @@ async function startServer() {
     rm.currWater = cW;
     rm.prevElec = cE;
     rm.currElec = cE;
-    rm.arrearsSatang = 0;
 
     saveAppState(state);
     res.json({ success: true, state, netRefundSatang });
@@ -477,10 +554,12 @@ async function startServer() {
     const lateSatang = calcLateFeeSatang(inv, state.simulatedDate, s);
     const netDue = inv.balanceDueSatang + lateSatang;
 
+    const dueText = inv.dueDate ? ` (กำหนดชำระภายใน ${inv.dueDate})` : '';
+
     const messageText = [
       `🏢 แจ้งบิลค่าเช่า ${s.apartmentName} — ห้อง ${inv.roomNumber}`,
       `ผู้เช่า: ${inv.tenantName} (แพ็กเกจ ${inv.tier})`,
-      `รอบตัดบิล: ${inv.issueDate} (กำหนดชำระภายใน 5 พ.ย.)`,
+      `รอบตัดบิล: ${inv.issueDate}${dueText}`,
       `--------------------------------`,
       `• ค่าเช่าห้องพัก: ${formatBaht(inv.rentSatang)} บาท`,
       inv.parkingFeeSatang > 0 ? `• ค่าจอดรถ (${inv.parkingType === 'CAR' ? 'รถยนต์' : 'มอเตอร์ไซค์'}): ${formatBaht(inv.parkingFeeSatang)} บาท` : null,
@@ -598,6 +677,9 @@ async function startServer() {
     state.formSubmissions = state.formSubmissions || [];
     const sub = state.formSubmissions.find(s => s.id === submissionId);
     if (!sub) return res.status(404).json({ error: 'ไม่พบรายการแจ้งโอนนี้' });
+    if (sub.status !== 'PENDING') {
+      return res.status(400).json({ error: 'รายการแจ้งโอนนี้ได้รับการดำเนินการไปแล้ว ไม่สามารถดำเนินการซ้ำได้' });
+    }
 
     // Match with targeted invoice or active unpaid invoice for this room
     let inv = invoiceId ? state.invoices.find(i => i.id === invoiceId) : undefined;
@@ -641,6 +723,9 @@ async function startServer() {
     state.formSubmissions = state.formSubmissions || [];
     const sub = state.formSubmissions.find(s => s.id === submissionId);
     if (!sub) return res.status(404).json({ error: 'ไม่พบรายการแจ้งโอนนี้' });
+    if (sub.status !== 'PENDING') {
+      return res.status(400).json({ error: 'รายการแจ้งโอนนี้ได้รับการดำเนินการไปแล้ว' });
+    }
 
     sub.status = 'REJECTED';
     sub.adminNote = reason || 'สลิปไม่ตรง / ตรวจสอบไม่พบยอดเงินในบัญชี';
@@ -678,6 +763,9 @@ async function startServer() {
     state.registrations = state.registrations || [];
     const reg = state.registrations.find(r => r.id === registrationId);
     if (!reg) return res.status(404).json({ error: 'ไม่พบรายการลงทะเบียนนี้' });
+    if (reg.status !== 'PENDING') {
+      return res.status(400).json({ error: 'คำขอนี้ได้รับการประมวลผลไปแล้ว' });
+    }
 
     const targetRoom = roomNumber || reg.requestedRoomNumber;
     const rm = state.rooms.find(r => r.roomNumber === targetRoom);
@@ -685,6 +773,9 @@ async function startServer() {
 
     if (rm.status === 'OCCUPIED') {
       return res.status(400).json({ error: `ห้อง ${targetRoom} มีผู้เช่าอยู่แล้วในปัจจุบัน` });
+    }
+    if (rm.status === 'RESERVED' && rm.phone && rm.phone !== reg.phone) {
+      return res.status(400).json({ error: `ห้อง ${targetRoom} มีผู้จองไว้แล้ว (${rm.tenantName})` });
     }
 
     const mult = depositMonths || state.settings.defaultDepositMonths;
@@ -719,6 +810,9 @@ async function startServer() {
     state.registrations = state.registrations || [];
     const reg = state.registrations.find(r => r.id === registrationId);
     if (!reg) return res.status(404).json({ error: 'ไม่พบรายการลงทะเบียนนี้' });
+    if (reg.status !== 'PENDING') {
+      return res.status(400).json({ error: 'คำขอนี้ได้รับการประมวลผลไปแล้ว' });
+    }
 
     reg.status = 'REJECTED';
     reg.adminNote = reason || 'ยกเลิก / ไม่ผ่านการอนุมัติ';

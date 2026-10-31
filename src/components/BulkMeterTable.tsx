@@ -10,8 +10,10 @@ interface BulkMeterTableProps {
 
 interface LocalReading {
   roomNumber: string;
+  prevWater: number;
   currWater: number;
   waterRoll: boolean;
+  prevElec: number;
   currElec: number;
   elecRoll: boolean;
 }
@@ -21,14 +23,17 @@ export const BulkMeterTable: React.FC<BulkMeterTableProps> = ({ state, onCommitI
   const occupiedRooms = rooms.filter(r => r.status === 'OCCUPIED');
 
   const [readings, setReadings] = useState<Record<string, LocalReading>>({});
+  const [allowEditPrev, setAllowEditPrev] = useState<boolean>(false);
 
   useEffect(() => {
     const map: Record<string, LocalReading> = {};
     occupiedRooms.forEach(rm => {
       map[rm.roomNumber] = {
         roomNumber: rm.roomNumber,
+        prevWater: rm.prevWater,
         currWater: rm.currWater,
         waterRoll: rm.waterRoll,
+        prevElec: rm.prevElec,
         currElec: rm.currElec,
         elecRoll: rm.elecRoll
       };
@@ -51,9 +56,11 @@ export const BulkMeterTable: React.FC<BulkMeterTableProps> = ({ state, onCommitI
       const next = { ...prev };
       occupiedRooms.forEach(rm => {
         if (next[rm.roomNumber]) {
-          next[rm.roomNumber].currWater = rm.prevWater + 8;
+          const currentPrevW = next[rm.roomNumber].prevWater;
+          const currentPrevE = next[rm.roomNumber].prevElec;
+          next[rm.roomNumber].currWater = currentPrevW + 8;
           if (!next[rm.roomNumber].elecRoll) {
-            next[rm.roomNumber].currElec = rm.prevElec + 130;
+            next[rm.roomNumber].currElec = currentPrevE + 130;
           }
         }
       });
@@ -66,8 +73,10 @@ export const BulkMeterTable: React.FC<BulkMeterTableProps> = ({ state, onCommitI
     for (const rm of occupiedRooms) {
       const rd = readings[rm.roomNumber];
       if (!rd) continue;
-      const wUnits = calcMeterUnits(rm.prevWater, rd.currWater, rd.waterRoll);
-      const eUnits = calcMeterUnits(rm.prevElec, rd.currElec, rd.elecRoll);
+      const effectivePrevW = allowEditPrev ? rd.prevWater : rm.prevWater;
+      const effectivePrevE = allowEditPrev ? rd.prevElec : rm.prevElec;
+      const wUnits = calcMeterUnits(effectivePrevW, rd.currWater, rd.waterRoll);
+      const eUnits = calcMeterUnits(effectivePrevE, rd.currElec, rd.elecRoll);
       if (wUnits < 0 || eUnits < 0) {
         alert(`ห้อง ${rm.roomNumber} มีเลขมิเตอร์ใหม่น้อยกว่าเลขเก่า กรุณาตรวจสอบหรือติ๊กวนรอบ (9999->0000)`);
         return;
@@ -99,6 +108,15 @@ export const BulkMeterTable: React.FC<BulkMeterTableProps> = ({ state, onCommitI
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300 cursor-pointer transition select-none">
+            <input
+              type="checkbox"
+              checked={allowEditPrev}
+              onChange={(e) => setAllowEditPrev(e.target.checked)}
+              className="accent-amber-600 rounded"
+            />
+            <span>🔓 ปลดล็อกแก้ไขเลขรอบก่อน</span>
+          </label>
           <button
             type="button"
             onClick={handleAutoFillSample}
@@ -149,14 +167,18 @@ export const BulkMeterTable: React.FC<BulkMeterTableProps> = ({ state, onCommitI
             {occupiedRooms.map(rm => {
               const rd = readings[rm.roomNumber] || {
                 roomNumber: rm.roomNumber,
+                prevWater: rm.prevWater,
                 currWater: rm.currWater,
                 waterRoll: rm.waterRoll,
+                prevElec: rm.prevElec,
                 currElec: rm.currElec,
                 elecRoll: rm.elecRoll
               };
 
-              const wUnits = calcMeterUnits(rm.prevWater, rd.currWater, rd.waterRoll);
-              const eUnits = calcMeterUnits(rm.prevElec, rd.currElec, rd.elecRoll);
+              const effectivePrevW = allowEditPrev ? rd.prevWater : rm.prevWater;
+              const effectivePrevE = allowEditPrev ? rd.prevElec : rm.prevElec;
+              const wUnits = calcMeterUnits(effectivePrevW, rd.currWater, rd.waterRoll);
+              const eUnits = calcMeterUnits(effectivePrevE, rd.currElec, rd.elecRoll);
               const wInvalid = wUnits < 0;
               const eInvalid = eUnits < 0;
 
@@ -212,9 +234,19 @@ export const BulkMeterTable: React.FC<BulkMeterTableProps> = ({ state, onCommitI
                   {/* Water Reading Inputs */}
                   <td className="py-2.5 px-3 bg-sky-50/50 border-x border-sky-100">
                     <div className="flex items-center justify-center gap-1.5">
-                      <span className="text-slate-500 mono-num w-10 text-right font-medium" title="เลขมิเตอร์เดือนก่อนหน้า">
-                        {rm.prevWater}
-                      </span>
+                      {allowEditPrev ? (
+                        <input
+                          type="number"
+                          value={rd.prevWater}
+                          onChange={(e) => handleUpdate(rm.roomNumber, 'prevWater', parseInt(e.target.value, 10) || 0)}
+                          className="w-16 border border-amber-400 bg-amber-50 rounded px-1.5 py-1 text-right font-bold mono-num text-amber-900 focus:ring-1 focus:ring-amber-500"
+                          title="แก้ไขเลขมิเตอร์รอบก่อนหน้า"
+                        />
+                      ) : (
+                        <span className="text-slate-600 mono-num w-12 text-right font-bold" title="เลขมิเตอร์ดึงมาจากบิลรอบก่อนหน้าอัตโนมัติ">
+                          {rd.prevWater}
+                        </span>
+                      )}
                       <span className="text-slate-400">→</span>
                       <input
                         type="number"
@@ -243,9 +275,19 @@ export const BulkMeterTable: React.FC<BulkMeterTableProps> = ({ state, onCommitI
                   {/* Electric Reading Inputs */}
                   <td className="py-2.5 px-3 bg-amber-50/50 border-x border-amber-100">
                     <div className="flex items-center justify-center gap-1.5">
-                      <span className="text-slate-500 mono-num w-12 text-right font-medium" title="เลขมิเตอร์เดือนก่อนหน้า">
-                        {rm.prevElec}
-                      </span>
+                      {allowEditPrev ? (
+                        <input
+                          type="number"
+                          value={rd.prevElec}
+                          onChange={(e) => handleUpdate(rm.roomNumber, 'prevElec', parseInt(e.target.value, 10) || 0)}
+                          className="w-16 border border-amber-400 bg-amber-50 rounded px-1.5 py-1 text-right font-bold mono-num text-amber-900 focus:ring-1 focus:ring-amber-500"
+                          title="แก้ไขเลขมิเตอร์รอบก่อนหน้า"
+                        />
+                      ) : (
+                        <span className="text-slate-600 mono-num w-12 text-right font-bold" title="เลขมิเตอร์ดึงมาจากบิลรอบก่อนหน้าอัตโนมัติ">
+                          {rd.prevElec}
+                        </span>
+                      )}
                       <span className="text-slate-400">→</span>
                       <input
                         type="number"
