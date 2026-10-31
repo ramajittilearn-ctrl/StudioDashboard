@@ -413,11 +413,16 @@ export default function App() {
   };
 
   const handleSendLineNotify = async (invoiceId: string) => {
-    const res = await sendLineNotification(invoiceId);
-    const updated = await fetchAppState();
-    await syncBothStores(updated);
-    showToast(res.apiSent ? 'ส่งบิลผ่าน LINE Messaging API สำเร็จ' : 'สร้างข้อความบิล LINE เรียบร้อย');
-    return res;
+    try {
+      const res = await sendLineNotification(invoiceId);
+      const updated = await fetchAppState();
+      await syncBothStores(updated);
+      showToast('✔ ส่งบิลผ่าน LINE Messaging API สำเร็จแล้ว');
+      return res;
+    } catch (err: any) {
+      showToast('❌ ไม่สามารถส่ง LINE ได้: ' + (err.message || 'เกิดข้อผิดพลาด'));
+      throw err;
+    }
   };
 
   const handleResetDb = async () => {

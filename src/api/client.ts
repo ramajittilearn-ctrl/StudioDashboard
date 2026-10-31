@@ -846,16 +846,11 @@ export async function sendLineNotification(
   const state = await getActiveState();
   const inv = state.invoices.find(i => i.id === invoiceId);
   if (!inv) {
-    return {
-      success: false,
-      apiSent: false,
-      apiError: 'Invoice not found',
-      messageText: '',
-      sentAt: ''
-    };
+    throw new Error('ไม่พบข้อมูลใบแจ้งหนี้');
   }
 
   const s = state.settings;
+  const rm = state.rooms.find(r => r.roomNumber === inv.roomNumber);
   const lateSatang = calcLateFeeSatang(inv, state.simulatedDate, s);
   const netDue = inv.balanceDueSatang + lateSatang;
 
@@ -885,36 +880,47 @@ export async function sendLineNotification(
     .filter(Boolean)
     .join('\n');
 
-  const sentAt = new Date().toISOString().replace('T', ' ').substring(0, 16);
-  inv.lineSentAt = sentAt;
+  // Check required settings for LINE API
+  if (!s.lineChannelAccessToken) {
+    throw new Error('ยังไม่ได้ระบุ LINE Channel Access Token ในหน้าตั้งค่า');
+  }
+
+  const destination = targetUserId || (rm && rm.lineId && rm.lineId.startsWith('U') ? rm.lineId : s.lineDestinationId);
+  if (!destination) {
+    throw new Error(`ไม่พบ LINE User ID (ขึ้นต้นด้วย U...) ของห้อง ${inv.roomNumber} หรือ Target User ID ในหน้าตั้งค่า`);
+  }
+
+  let apiSent = false;
+  let apiError = '';
 
   try {
     const res = await fetch('/api/line/notify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ invoiceId, targetUserId })
+      body: JSON.stringify({ invoiceId, targetUserId: destination })
     });
     if (res.ok) {
       const data = await res.json();
-      await persistState(state);
-      return data;
+      apiSent = Boolean(data.apiSent);
+      apiError = data.apiError || '';
+    } else {
+      apiError = `Server error HTTP ${res.status}`;
     }
   } catch {
-    // static mode
+    apiError = 'ไม่สามารถส่งข้อความได้โดยตรงจากเบราว์เซอร์ (ติดข้อจำกัด CORS ของ LINE API) กรุณาใช้ปุ่ม "คัดลอกข้อความบิล" หรือ "เปิดแอป LINE" เพื่อส่งให้ผู้เช่า';
   }
 
-  try {
-    if (navigator.clipboard) {
-      await navigator.clipboard.writeText(messageText);
-    }
-  } catch {
-    // ignore clipboard errors
+  if (!apiSent) {
+    throw new Error(apiError || 'ไม่สามารถส่งข้อความผ่าน LINE API ได้');
   }
 
+  const sentAt = new Date().toISOString().replace('T', ' ').substring(0, 16);
+  inv.lineSentAt = sentAt;
   await persistState(state);
+
   return {
     success: true,
-    apiSent: false,
+    apiSent: true,
     messageText,
     sentAt
   };

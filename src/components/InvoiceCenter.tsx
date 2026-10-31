@@ -360,11 +360,11 @@ export const InvoiceCenter: React.FC<InvoiceCenterProps> = ({
 
                 {/* API feedback banner */}
                 {lineResult && (
-                  <div className={`px-4 py-2 text-xs border-t ${lineResult.apiSent ? 'bg-emerald-100 text-emerald-800 border-emerald-200' : 'bg-slate-100 text-slate-700 border-slate-200'}`}>
+                  <div className={`px-4 py-2 text-xs border-t ${lineResult.apiSent ? 'bg-emerald-100 text-emerald-800 border-emerald-200' : 'bg-rose-50 text-rose-800 border-rose-200'}`}>
                     {lineResult.apiSent ? (
                       <span>✔ ส่งแจ้งเตือนผ่าน LINE Messaging API สำเร็จแล้ว</span>
                     ) : (
-                      <span>ℹ️ บันทึกการส่งบิลแล้ว (ไม่ได้กำหนด Channel Access Token หรือ Destination ID ในหน้าตั้งค่า)</span>
+                      <span>❌ ส่ง LINE ไม่สำเร็จ: {lineResult.apiError || 'ยังไม่ได้ตั้งค่า API Key หรือ LINE ID'}</span>
                     )}
                   </div>
                 )}
