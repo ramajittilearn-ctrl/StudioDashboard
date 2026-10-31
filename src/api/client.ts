@@ -2,6 +2,7 @@ import {
   AppState,
   FormSubmission,
   Invoice,
+  ParkingType,
   PaymentRecord,
   PropertySettings,
   Room,
@@ -9,6 +10,7 @@ import {
 } from '../types';
 import { calcLateFeeSatang, calcMeterUnits, calcNextDueDate, calcProratedRentSatang, formatBaht, getLatestRoomInvoice } from '../lib/finance';
 import { saveStateToFirestore } from '../lib/firebase';
+import { LIVE_INFORM_PAGE_URL, LIVE_PAYMENT_FORM_URL, LIVE_REGISTRATION_FORM_URL } from '../lib/bridgeScript';
 
 export function createDayOneState(): AppState {
   const settings: PropertySettings = {
@@ -29,7 +31,10 @@ export function createDayOneState(): AppState {
     contactInfo: 'โทร. 092-825-5788 • LINE: @takyapartment',
     tierStandardSatang: 250000,  // 2,500 THB
     tierSilverSatang: 300000,    // 3,000 THB
-    tierGoldSatang: 350000       // 3,500 THB
+    tierGoldSatang: 350000,      // 3,500 THB
+    paymentFormUrl: LIVE_PAYMENT_FORM_URL,
+    registrationFormUrl: LIVE_REGISTRATION_FORM_URL,
+    informPageUrl: LIVE_INFORM_PAGE_URL
   };
 
   const rooms: Room[] = [
@@ -103,7 +108,10 @@ export function createInitialSeedState(): AppState {
     contactInfo: 'โทร. 092-825-5788 • LINE: @takyapartment',
     tierStandardSatang: 250000,
     tierSilverSatang: 300000,
-    tierGoldSatang: 350000
+    tierGoldSatang: 350000,
+    paymentFormUrl: LIVE_PAYMENT_FORM_URL,
+    registrationFormUrl: LIVE_REGISTRATION_FORM_URL,
+    informPageUrl: LIVE_INFORM_PAGE_URL
   };
 
   const rooms: Room[] = [
@@ -244,6 +252,12 @@ function cloneState<T>(value: T): T {
 function normalizeState(s: AppState): AppState {
   return {
     ...s,
+    settings: {
+      ...s.settings,
+      paymentFormUrl: s.settings.paymentFormUrl || LIVE_PAYMENT_FORM_URL,
+      registrationFormUrl: s.settings.registrationFormUrl || LIVE_REGISTRATION_FORM_URL,
+      informPageUrl: s.settings.informPageUrl || LIVE_INFORM_PAGE_URL
+    },
     formSubmissions: s.formSubmissions || [],
     registrations: s.registrations || [],
     moveOutArchives: s.moveOutArchives || [],
@@ -819,7 +833,9 @@ export async function submitMoveOut(payload: any): Promise<{ state: AppState; ne
     rm.status = 'AVAILABLE';
     rm.tenantName = '';
     rm.phone = '';
+    rm.email = '';
     rm.lineId = '';
+    rm.notes = '';
     rm.depositSatang = 0;
     rm.parkingType = 'NONE';
     rm.parkingFeeSatang = 0;
@@ -937,7 +953,8 @@ export async function sendLineNotification(
     `✅ ยอดสุทธิที่ต้องชำระ: ${formatBaht(netDue)} บาท`,
     `📲 สแกน PromptPay: ${s.promptPayId}`,
     `🏦 หรือโอนบัญชี ${s.bankName} ${s.bankAccount} (${s.bankOwner})`,
-    `เมื่อโอนแล้วกรุณาแนบรูปสลิปตอบกลับ ขอบคุณครับ`
+    `🔗 แจ้งชำระเงิน/แนบสลิป: ${s.informPageUrl || LIVE_INFORM_PAGE_URL}`,
+    `เมื่อโอนแล้วกรุณาแจ้งชำระผ่านลิงก์ด้านบนหรือแนบรูปสลิปตอบกลับ ขอบคุณครับ`
   ]
     .filter(Boolean)
     .join('\n');
@@ -1035,11 +1052,239 @@ export async function manualUploadSlip(payload: any): Promise<{ success: boolean
   return { success: true, state: nextState };
 }
 
+function inferVehicleFromNotes(notes?: string): ParkingType {
+  const s = String(notes || '').toLowerCase();
+  if (!s) return 'NONE';
+  if (/รถยนต์|เก๋ง|กระบะ|\bcar\b/.test(s)) return 'CAR';
+  if (/มอเตอร์ไซค์|มอไซ|จักรยานยนต์|\bbike\b|\bmotor/.test(s)) return 'BIKE';
+  return 'NONE';
+}
+
+async function postToGoogleBridge(
+  state: AppState,
+  payload: Record<string, any>
+): Promise<{ synced: boolean; warning?: string }> {
+  const url = String(state.settings.googleAppsScriptUrl || '').trim();
+  const token = String(state.settings.googleAppsScriptToken || '').trim();
+  if (!url || !token || !payload.externalKey) {
+    return { synced: false };
+  }
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ ...payload, token })
+    });
+    const data = await res.json();
+    if (!res.ok || !data || !data.ok) {
+      return {
+        synced: false,
+        warning: data?.error || `อัปเดต Google Sheet ไม่สำเร็จ (HTTP ${res.status})`
+      };
+    }
+    return { synced: true };
+  } catch (err: any) {
+    return {
+      synced: false,
+      warning: `บันทึกใน Dashboard สำเร็จ แต่ซิงก์กลับ Google Sheet ไม่ได้: ${err?.message || 'Network error'}`
+    };
+  }
+}
+
+export interface GoogleBridgeSyncResult {
+  synced: boolean;
+  changed: boolean;
+  newPaymentsCount: number;
+  newRegistrationsCount: number;
+  pendingPaymentsCount: number;
+  pendingRegistrationsCount: number;
+  dueDay?: number;
+  state: AppState;
+}
+
+export async function syncGoogleFormsFromBridge(
+  overrideUrl?: string,
+  overrideToken?: string
+): Promise<GoogleBridgeSyncResult> {
+  const state = await getActiveState();
+  const url = String(overrideUrl !== undefined ? overrideUrl : (state.settings.googleAppsScriptUrl || '')).trim();
+  const token = String(overrideToken !== undefined ? overrideToken : (state.settings.googleAppsScriptToken || '')).trim();
+
+  if (!url || !token) {
+    throw new Error('กรุณาระบุ Apps Script Web App URL และ Secret Token ก่อนดึงข้อมูลจาก Google Form');
+  }
+  if (!/^https:\/\/script\.google\.com\/macros\/s\//.test(url)) {
+    throw new Error('รูปแบบ Web App URL ไม่ถูกต้อง (ต้องขึ้นต้นด้วย https://script.google.com/macros/s/.../exec)');
+  }
+
+  const sep = url.includes('?') ? '&' : '?';
+  let res: Response;
+  try {
+    res = await fetch(`${url}${sep}action=pull&token=${encodeURIComponent(token)}`, {
+      method: 'GET',
+      cache: 'no-store'
+    });
+  } catch (err: any) {
+    throw new Error(
+      `เชื่อมต่อ Google Apps Script ไม่สำเร็จ (${err?.message || 'CORS / Network Error'}) — กรุณาตรวจสอบว่า Deploy เป็น Web App (Execute as: Me, Who has access: Anyone)`
+    );
+  }
+
+  let data: any;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error('Google Apps Script ไม่ได้ส่งข้อมูล JSON กลับมา กรุณาตรวจสอบสิทธิ์ Who has access: Anyone ในหน้า Manage deployments');
+  }
+
+  if (!res.ok || !data || !data.ok) {
+    throw new Error(data?.error || `ดึงข้อมูลจาก Google Sheet ไม่สำเร็จ (HTTP ${res.status})`);
+  }
+
+  let changed = false;
+  let newPaymentsCount = 0;
+  let newRegistrationsCount = 0;
+
+  if (
+    (overrideUrl !== undefined && url !== (state.settings.googleAppsScriptUrl || '')) ||
+    (overrideToken !== undefined && token !== (state.settings.googleAppsScriptToken || ''))
+  ) {
+    state.settings.googleAppsScriptUrl = url;
+    state.settings.googleAppsScriptToken = token;
+    changed = true;
+  }
+
+  state.formSubmissions = state.formSubmissions || [];
+  state.registrations = state.registrations || [];
+
+  const incomingPayments: any[] = Array.isArray(data.payments) ? data.payments : [];
+  incomingPayments.forEach((p, idx) => {
+    const extKey = String(p.externalKey || '').trim();
+    if (!extKey) return;
+    const amountSatang = Math.round(Number(p.amountBaht || 0) * 100);
+    const existing = state.formSubmissions!.find(s => s.externalKey === extKey);
+
+    if (!existing) {
+      const status: FormSubmission['status'] =
+        p.status === 'RECONCILED' ? 'RECONCILED' : p.status === 'REJECTED' ? 'REJECTED' : 'PENDING';
+      state.formSubmissions!.unshift({
+        id: `GF-PAY-${Date.now()}-${idx}`,
+        externalKey: extKey,
+        sheetRow: Number(p.sheetRow) || undefined,
+        roomNumber: String(p.roomNumber || '').trim(),
+        tenantName: String(p.tenantName || '').trim() || `ผู้เช่าห้อง ${p.roomNumber}`,
+        amountSatang,
+        billingPeriod: p.billingPeriod ? String(p.billingPeriod) : undefined,
+        transferDate: String(p.transferDate || state.simulatedDate),
+        transferTime: String(p.transferTime || '12:00'),
+        bankAccount: state.settings.bankName || 'KBank',
+        paymentCategories: p.paymentCategories ? String(p.paymentCategories) : undefined,
+        slipUrl: String(p.slipUrl || ''),
+        driveFileId: p.driveFileId ? String(p.driveFileId) : undefined,
+        submittedAt: String(p.submittedAt || new Date().toISOString()),
+        status,
+        adminNote: p.notes ? String(p.notes) : undefined
+      });
+      changed = true;
+      if (status === 'PENDING') {
+        newPaymentsCount++;
+      }
+    } else {
+      if (p.sheetRow && existing.sheetRow !== Number(p.sheetRow)) {
+        existing.sheetRow = Number(p.sheetRow);
+        changed = true;
+      }
+      // If reconciled or rejected directly on the Google Sheet while still PENDING on Dashboard, reflect it
+      if (existing.status === 'PENDING' && (p.status === 'RECONCILED' || p.status === 'REJECTED')) {
+        existing.status = p.status;
+        existing.adminNote = existing.adminNote || 'อัปเดตสถานะจาก Google Sheet';
+        changed = true;
+      }
+    }
+  });
+
+  const incomingRegs: any[] = Array.isArray(data.registrations) ? data.registrations : [];
+  incomingRegs.forEach((r, idx) => {
+    const extKey = String(r.externalKey || '').trim();
+    if (!extKey) return;
+    const existing = state.registrations!.find(reg => reg.externalKey === extKey);
+
+    if (!existing) {
+      const status: TenantRegistration['status'] =
+        r.status === 'APPROVED' ? 'APPROVED' : r.status === 'REJECTED' ? 'REJECTED' : 'PENDING';
+      const notesStr = r.notes ? String(r.notes).trim() : '';
+      state.registrations!.unshift({
+        id: `GF-REG-${Date.now()}-${idx}`,
+        externalKey: extKey,
+        sheetRow: Number(r.sheetRow) || undefined,
+        requestedRoomNumber: String(r.requestedRoomNumber || '').trim(),
+        tenantName: String(r.tenantName || '').trim() || `ผู้สมัครห้อง ${r.requestedRoomNumber}`,
+        phone: String(r.phone || '').trim(),
+        email: r.email ? String(r.email).trim() : undefined,
+        lineId: '',
+        vehicleType: inferVehicleFromNotes(notesStr),
+        plannedMoveInDate: String(r.plannedMoveInDate || state.simulatedDate),
+        notes: notesStr || undefined,
+        depositPaidSatang: 0,
+        status,
+        submittedAt: String(r.submittedAt || new Date().toISOString())
+      });
+      changed = true;
+      if (status === 'PENDING') {
+        newRegistrationsCount++;
+      }
+    } else {
+      if (r.sheetRow && existing.sheetRow !== Number(r.sheetRow)) {
+        existing.sheetRow = Number(r.sheetRow);
+        changed = true;
+      }
+      if (existing.status === 'PENDING' && (r.status === 'APPROVED' || r.status === 'REJECTED')) {
+        existing.status = r.status;
+        changed = true;
+      }
+    }
+  });
+
+  const finalState = changed ? await persistState(state) : state;
+  const pendingPaymentsCount = (finalState.formSubmissions || []).filter(s => s.status === 'PENDING').length;
+  const pendingRegistrationsCount = (finalState.registrations || []).filter(r => r.status === 'PENDING').length;
+
+  return {
+    synced: true,
+    changed,
+    newPaymentsCount,
+    newRegistrationsCount,
+    pendingPaymentsCount,
+    pendingRegistrationsCount,
+    dueDay: data.dueDay,
+    state: finalState
+  };
+}
+
+export async function refreshGoogleFormsViaBridge(): Promise<{ ok: boolean; message: string }> {
+  const state = await getActiveState();
+  const url = String(state.settings.googleAppsScriptUrl || '').trim();
+  const token = String(state.settings.googleAppsScriptToken || '').trim();
+  if (!url || !token) {
+    throw new Error('กรุณาตั้งค่า Web App URL และ Token ก่อน');
+  }
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ action: 'refreshForms', token })
+  });
+  const data = await res.json();
+  if (!res.ok || !data?.ok) {
+    throw new Error(data?.error || 'อัปเดตตัวเลือกเดือนใน Google Form ไม่สำเร็จ');
+  }
+  return { ok: true, message: data.message || 'อัปเดตวันครบกำหนดใน Google Form เรียบร้อยแล้ว' };
+}
+
 export async function approveReconcile(
   submissionId: string,
   invoiceId?: string,
   note?: string
-): Promise<{ success: boolean; state: AppState }> {
+): Promise<{ success: boolean; state: AppState; sheetSynced?: boolean; sheetWarning?: string }> {
   const state = await getActiveState();
   state.formSubmissions = state.formSubmissions || [];
   const sub = state.formSubmissions.find(s => s.id === submissionId);
@@ -1051,6 +1296,15 @@ export async function approveReconcile(
   }
 
   let inv = invoiceId ? state.invoices.find(i => i.id === invoiceId) : undefined;
+  if (!inv && sub.billingPeriod) {
+    inv = state.invoices.find(
+      i =>
+        i.roomNumber === sub.roomNumber &&
+        i.billingPeriod === sub.billingPeriod &&
+        i.status !== 'ROLLED_OVER' &&
+        i.balanceDueSatang > 0
+    );
+  }
   if (!inv) {
     inv = getLatestRoomInvoice(state.invoices, sub.roomNumber);
     if (inv && inv.balanceDueSatang <= 0) {
@@ -1094,13 +1348,21 @@ export async function approveReconcile(
   sub.adminNote = note || 'ยืนยันยอดเงินเข้าบัญชีเรียบร้อย';
 
   const nextState = await persistState(state);
-  return { success: true, state: nextState };
+  const bridge = await postToGoogleBridge(nextState, {
+    action: 'reconcilePayment',
+    externalKey: sub.externalKey,
+    sheetRow: sub.sheetRow,
+    verifiedAmountBaht: sub.amountSatang / 100,
+    bankRef: note || `Dashboard ${sub.transferDate} ${sub.transferTime}`
+  });
+
+  return { success: true, state: nextState, sheetSynced: bridge.synced, sheetWarning: bridge.warning };
 }
 
 export async function rejectReconcile(
   submissionId: string,
   reason?: string
-): Promise<{ success: boolean; state: AppState }> {
+): Promise<{ success: boolean; state: AppState; sheetSynced?: boolean; sheetWarning?: string }> {
   const state = await getActiveState();
   state.formSubmissions = state.formSubmissions || [];
   const sub = state.formSubmissions.find(s => s.id === submissionId);
@@ -1115,7 +1377,13 @@ export async function rejectReconcile(
   sub.adminNote = reason || 'สลิปไม่ตรง / ตรวจสอบไม่พบยอดเงินในบัญชี';
 
   const nextState = await persistState(state);
-  return { success: true, state: nextState };
+  const bridge = await postToGoogleBridge(nextState, {
+    action: 'rejectPayment',
+    externalKey: sub.externalKey,
+    sheetRow: sub.sheetRow
+  });
+
+  return { success: true, state: nextState, sheetSynced: bridge.synced, sheetWarning: bridge.warning };
 }
 
 export async function submitRegistration(payload: any): Promise<{ success: boolean; state: AppState }> {
@@ -1124,11 +1392,13 @@ export async function submitRegistration(payload: any): Promise<{ success: boole
     requestedRoomNumber,
     tenantName,
     phone,
+    email,
     lineId,
     idCardNumber,
     vehicleType,
     licensePlate,
     plannedMoveInDate,
+    notes,
     depositPaidSatang
   } = payload;
   state.registrations = state.registrations || [];
@@ -1138,11 +1408,13 @@ export async function submitRegistration(payload: any): Promise<{ success: boole
     requestedRoomNumber: String(requestedRoomNumber).trim(),
     tenantName: (tenantName || '').trim(),
     phone: (phone || '').trim(),
+    email: email ? String(email).trim() : undefined,
     lineId: (lineId || '').trim(),
     idCardNumber: (idCardNumber || '').trim(),
     vehicleType: vehicleType || 'NONE',
     licensePlate: (licensePlate || '').trim(),
     plannedMoveInDate: plannedMoveInDate || state.simulatedDate,
+    notes: notes ? String(notes).trim() : undefined,
     depositPaidSatang: Number(depositPaidSatang) || 0,
     status: 'PENDING',
     submittedAt: new Date().toISOString()
@@ -1153,9 +1425,25 @@ export async function submitRegistration(payload: any): Promise<{ success: boole
   return { success: true, state: nextState };
 }
 
-export async function approveRegistration(payload: any): Promise<{ success: boolean; state: AppState }> {
+export async function approveRegistration(
+  payload: any
+): Promise<{ success: boolean; state: AppState; sheetSynced?: boolean; sheetWarning?: string }> {
   const state = await getActiveState();
-  const { registrationId, roomNumber, tier, rentSatang, depositMonths, initWater, initElec } = payload;
+  const {
+    registrationId,
+    roomNumber,
+    tier,
+    rentSatang,
+    depositMonths,
+    parkingType,
+    lineId,
+    startDate,
+    notes,
+    initWater,
+    initElec,
+    issueInitialInvoice,
+    useProrate
+  } = payload;
   state.registrations = state.registrations || [];
   const reg = state.registrations.find(r => r.id === registrationId);
 
@@ -1174,56 +1462,119 @@ export async function approveRegistration(payload: any): Promise<{ success: bool
   if (rm.status === 'OCCUPIED') {
     throw new Error(`ห้อง ${targetRoom} มีผู้เช่าอยู่แล้วในปัจจุบัน`);
   }
-  if (rm.status === 'RESERVED' && rm.phone && rm.phone !== reg.phone) {
-    throw new Error(`ห้อง ${targetRoom} มีผู้จองไว้แล้ว (${rm.tenantName})`);
-  }
 
-  const mult = depositMonths || state.settings.defaultDepositMonths;
+  const bookingCreditSatang = rm.status === 'RESERVED' ? (rm.bookingDepositSatang || 0) : 0;
+  const mult = depositMonths !== undefined ? Number(depositMonths) : state.settings.defaultDepositMonths;
+  const finalTier = tier || rm.tier || 'STANDARD';
   const finalRentSatang =
     Number(rentSatang) ||
-    (tier === 'GOLD'
+    (finalTier === 'GOLD'
       ? state.settings.tierGoldSatang
-      : tier === 'SILVER'
+      : finalTier === 'SILVER'
       ? state.settings.tierSilverSatang
       : state.settings.tierStandardSatang);
   const depositSatang = finalRentSatang * mult;
-
-  rm.status = 'OCCUPIED';
-  rm.tenantName = reg.tenantName;
-  rm.phone = reg.phone;
-  rm.lineId = reg.lineId || '';
-  rm.tier = tier || rm.tier || 'STANDARD';
-  rm.rentSatang = finalRentSatang;
-  rm.depositSatang = depositSatang;
-  rm.startDate = reg.plannedMoveInDate || state.simulatedDate;
-  rm.parkingType = reg.vehicleType || 'NONE';
-  rm.parkingFeeSatang =
-    reg.vehicleType === 'CAR'
+  const finalParking: ParkingType = parkingType || reg.vehicleType || 'NONE';
+  const parkingFeeSatang =
+    finalParking === 'CAR'
       ? state.settings.carParkingRateSatang
-      : reg.vehicleType === 'BIKE'
+      : finalParking === 'BIKE'
       ? state.settings.bikeParkingRateSatang
       : 0;
+  const moveInDate = startDate || reg.plannedMoveInDate || state.simulatedDate;
+
   const hasInitWater = initWater !== undefined && initWater !== null && initWater !== '';
   const hasInitElec = initElec !== undefined && initElec !== null && initElec !== '';
   const wVal = hasInitWater ? Number(initWater) : (rm.currWater || 0);
   const eVal = hasInitElec ? Number(initElec) : (rm.currElec || 0);
+
+  rm.status = 'OCCUPIED';
+  rm.tenantName = reg.tenantName;
+  rm.phone = reg.phone;
+  rm.email = reg.email || rm.email || '';
+  rm.lineId = (lineId !== undefined ? String(lineId) : (reg.lineId || '')).trim();
+  rm.notes = (notes !== undefined ? String(notes) : (reg.notes || '')).trim();
+  rm.tier = finalTier;
+  rm.rentSatang = finalRentSatang;
+  rm.depositSatang = depositSatang;
+  rm.bookingDepositSatang = 0;
+  rm.startDate = moveInDate;
+  rm.parkingType = finalParking;
+  rm.parkingFeeSatang = parkingFeeSatang;
   rm.prevWater = wVal;
   rm.currWater = wVal;
   rm.prevElec = eVal;
   rm.currElec = eVal;
+  rm.waterRoll = false;
+  rm.elecRoll = false;
   rm.arrearsSatang = 0;
 
+  if (issueInitialInvoice && moveInDate) {
+    const pro = calcProratedRentSatang(finalRentSatang, moveInDate, state.settings.billingDay);
+    const firstRentSatang = useProrate ? pro.proratedAmountSatang : finalRentSatang;
+    const period = moveInDate.substring(0, 7);
+    const nextDue = calcNextDueDate(moveInDate, state.settings.dueDayNextMonth || 5);
+    const subtotalMoveInSatang = firstRentSatang + parkingFeeSatang;
+    const discountSatang = Math.min(subtotalMoveInSatang, Math.max(0, bookingCreditSatang));
+    const totalMoveInSatang = Math.max(0, subtotalMoveInSatang - discountSatang);
+
+    state.invoices.push({
+      id: `INV-${period.replace('-', '')}-${rm.roomNumber}-MOVEIN`,
+      roomNumber: rm.roomNumber,
+      tenantName: rm.tenantName,
+      tier: rm.tier,
+      billingPeriod: period,
+      issueDate: moveInDate,
+      dueDate: nextDue,
+      rentSatang: firstRentSatang,
+      parkingType: rm.parkingType,
+      parkingFeeSatang,
+      prevWater: rm.prevWater,
+      currWater: rm.currWater,
+      waterRoll: false,
+      waterUnits: 0,
+      waterSatang: 0,
+      prevElec: rm.prevElec,
+      currElec: rm.currElec,
+      elecRoll: false,
+      elecUnits: 0,
+      elecSatang: 0,
+      arrearsSatang: 0,
+      lateFeeSatang: 0,
+      discountSatang: discountSatang > 0 ? discountSatang : undefined,
+      adjustmentNote: discountSatang > 0 ? 'หักเงินมัดจำจองล่วงหน้า' : undefined,
+      totalSatang: totalMoveInSatang,
+      paidSatang: 0,
+      balanceDueSatang: totalMoveInSatang,
+      status: totalMoveInSatang === 0 ? 'PAID' : 'ISSUED',
+      payments: []
+    });
+  }
+
   reg.status = 'APPROVED';
+  reg.vehicleType = finalParking;
+  reg.lineId = rm.lineId;
+  reg.plannedMoveInDate = moveInDate;
   reg.approvedAt = new Date().toISOString();
+  reg.adminNote = targetRoom !== reg.requestedRoomNumber ? `บรรจุเข้าห้อง ${targetRoom}` : 'อนุมัติเข้าพักเรียบร้อย';
 
   const nextState = await persistState(state);
-  return { success: true, state: nextState };
+  const bridge = await postToGoogleBridge(nextState, {
+    action: 'approveRegistration',
+    externalKey: reg.externalKey,
+    sheetRow: reg.sheetRow,
+    roomNumber: targetRoom,
+    tier: finalTier,
+    parkingType: finalParking
+  });
+
+  return { success: true, state: nextState, sheetSynced: bridge.synced, sheetWarning: bridge.warning };
 }
 
 export async function rejectRegistration(
   registrationId: string,
   reason?: string
-): Promise<{ success: boolean; state: AppState }> {
+): Promise<{ success: boolean; state: AppState; sheetSynced?: boolean; sheetWarning?: string }> {
   const state = await getActiveState();
   state.registrations = state.registrations || [];
   const reg = state.registrations.find(r => r.id === registrationId);
@@ -1238,7 +1589,14 @@ export async function rejectRegistration(
   reg.adminNote = reason || 'ยกเลิก / ไม่ผ่านการอนุมัติ';
 
   const nextState = await persistState(state);
-  return { success: true, state: nextState };
+  const bridge = await postToGoogleBridge(nextState, {
+    action: 'rejectRegistration',
+    externalKey: reg.externalKey,
+    sheetRow: reg.sheetRow,
+    roomNumber: reg.requestedRoomNumber
+  });
+
+  return { success: true, state: nextState, sheetSynced: bridge.synced, sheetWarning: bridge.warning };
 }
 
 export async function resetToDayOne(): Promise<{ success: boolean; state: AppState; message: string }> {

@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { AppState, PropertySettings } from '../types';
 import { formatBaht, fromSatang, toSatang } from '../lib/finance';
-import { Settings, Plus, Trash2, Download, Upload, RotateCcw, MessageSquare } from 'lucide-react';
-import { downloadStateJson, testLineConnection } from '../api/client';
+import { Settings, Plus, Trash2, Download, Upload, RotateCcw, MessageSquare, ExternalLink, RefreshCw } from 'lucide-react';
+import { downloadStateJson, syncGoogleFormsFromBridge, testLineConnection } from '../api/client';
+import { LIVE_INFORM_PAGE_URL, LIVE_PAYMENT_FORM_URL, LIVE_REGISTRATION_FORM_URL } from '../lib/bridgeScript';
 
 interface SettingsExpensesProps {
   state: AppState;
@@ -11,6 +12,7 @@ interface SettingsExpensesProps {
   onDeleteExpense: (id: string) => void;
   onResetDatabase: () => void;
   onRestoreBackup: (backupState: AppState) => void;
+  onRefreshState?: () => void;
 }
 
 export const SettingsExpenses: React.FC<SettingsExpensesProps> = ({
@@ -19,7 +21,8 @@ export const SettingsExpenses: React.FC<SettingsExpensesProps> = ({
   onAddExpense,
   onDeleteExpense,
   onResetDatabase,
-  onRestoreBackup
+  onRestoreBackup,
+  onRefreshState
 }) => {
   const { settings, expenses, invoices } = state;
 
@@ -40,6 +43,10 @@ export const SettingsExpenses: React.FC<SettingsExpensesProps> = ({
   const [bankOwner, setBankOwner] = useState<string>(settings.bankOwner);
   const [lineToken, setLineToken] = useState<string>(settings.lineChannelAccessToken || '');
   const [lineDestId, setLineDestId] = useState<string>(settings.lineDestinationId || '');
+  const [bridgeUrl, setBridgeUrl] = useState<string>(settings.googleAppsScriptUrl || '');
+  const [bridgeToken, setBridgeToken] = useState<string>(settings.googleAppsScriptToken || '');
+  const [informPageUrl, setInformPageUrl] = useState<string>(settings.informPageUrl || LIVE_INFORM_PAGE_URL);
+  const [testingBridge, setTestingBridge] = useState<boolean>(false);
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
 
   useEffect(() => {
@@ -59,6 +66,9 @@ export const SettingsExpenses: React.FC<SettingsExpensesProps> = ({
     setBankOwner(settings.bankOwner);
     setLineToken(settings.lineChannelAccessToken || '');
     setLineDestId(settings.lineDestinationId || '');
+    setBridgeUrl(settings.googleAppsScriptUrl || '');
+    setBridgeToken(settings.googleAppsScriptToken || '');
+    setInformPageUrl(settings.informPageUrl || LIVE_INFORM_PAGE_URL);
   }, [settings]);
 
   // New Expense Form
@@ -84,7 +94,10 @@ export const SettingsExpenses: React.FC<SettingsExpensesProps> = ({
       bankAccount,
       bankOwner,
       lineChannelAccessToken: lineToken.trim(),
-      lineDestinationId: lineDestId.trim()
+      lineDestinationId: lineDestId.trim(),
+      googleAppsScriptUrl: bridgeUrl.trim(),
+      googleAppsScriptToken: bridgeToken.trim(),
+      informPageUrl: informPageUrl.trim() || LIVE_INFORM_PAGE_URL
     });
     setSaveSuccess(true);
     setTimeout(() => setSaveSuccess(false), 2500);
@@ -383,6 +396,105 @@ export const SettingsExpenses: React.FC<SettingsExpensesProps> = ({
             </div>
             <div className="text-[10px] text-emerald-800 bg-emerald-100/70 p-2 rounded leading-relaxed">
               💡 <strong>วิธีส่งตรงถึงผู้เช่าแต่ละห้อง:</strong> เพียงใส่ LINE User ID ในข้อมูลผู้เช่าของห้องนั้นๆ เมื่อกด "ส่ง LINE OA" ระบบจะยิงบิลตรงเข้าแชทส่วนตัวของผู้เช่าทันที
+            </div>
+          </div>
+
+          {/* Google Form Bridge Configuration */}
+          <div className="bg-sky-50/70 p-3 rounded-lg border border-sky-200 space-y-2">
+            <div className="font-semibold text-sky-950 flex flex-wrap items-center justify-between gap-1.5">
+              <span>🔗 การเชื่อมต่อ Google Form (ลงทะเบียนผู้เช่า &amp; แจ้งชำระเงิน)</span>
+              <button
+                type="button"
+                disabled={testingBridge}
+                onClick={async () => {
+                  if (!bridgeUrl.trim() || !bridgeToken.trim()) {
+                    alert('กรุณากรอก Apps Script Web App URL และ Bridge Secret Token ก่อนทดสอบ');
+                    return;
+                  }
+                  setTestingBridge(true);
+                  try {
+                    const res = await syncGoogleFormsFromBridge(bridgeUrl.trim(), bridgeToken.trim());
+                    onRefreshState?.();
+                    alert(
+                      `✅ เชื่อมต่อ Google Form สำเร็จ!\n• คำขอลงทะเบียนรออนุมัติ: ${res.pendingRegistrationsCount} รายการ\n• สลิปรอตรวจสอบ: ${res.pendingPaymentsCount} รายการ`
+                    );
+                  } catch (err: any) {
+                    alert('❌ เชื่อมต่อไม่สำเร็จ: ' + (err.message || 'ไม่สามารถดึงข้อมูลได้'));
+                  } finally {
+                    setTestingBridge(false);
+                  }
+                }}
+                className="px-2.5 py-1 rounded bg-sky-600 hover:bg-sky-700 text-white text-[11px] font-bold shadow-xs transition flex items-center gap-1"
+              >
+                <RefreshCw className={`w-3 h-3 ${testingBridge ? 'animate-spin' : ''}`} />
+                <span>{testingBridge ? 'กำลังดึงข้อมูล...' : 'ทดสอบ & ซิงก์ Google Form'}</span>
+              </button>
+            </div>
+            <div>
+              <label className="block text-[11px] font-medium text-slate-700 mb-1">
+                Apps Script Web App URL (จาก Deploy &gt; Web app)
+              </label>
+              <input
+                type="url"
+                value={bridgeUrl}
+                onChange={(e) => setBridgeUrl(e.target.value)}
+                placeholder="https://script.google.com/macros/s/.../exec"
+                className="w-full border border-sky-300 bg-white rounded px-2.5 py-1.5 mono-num text-[11px]"
+              />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[11px] font-medium text-slate-700 mb-1">
+                  Bridge Secret Token (จาก setupDashboardBridge)
+                </label>
+                <input
+                  type="password"
+                  value={bridgeToken}
+                  onChange={(e) => setBridgeToken(e.target.value)}
+                  placeholder="taky_..."
+                  className="w-full border border-sky-300 bg-white rounded px-2.5 py-1.5 mono-num text-[11px]"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-medium text-slate-700 mb-1">
+                  ลิงก์แจ้งชำระเงิน (แนบท้ายบิล LINE)
+                </label>
+                <input
+                  type="url"
+                  value={informPageUrl}
+                  onChange={(e) => setInformPageUrl(e.target.value)}
+                  placeholder={LIVE_INFORM_PAGE_URL}
+                  className="w-full border border-sky-300 bg-white rounded px-2.5 py-1.5 mono-num text-[11px]"
+                />
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2 pt-0.5 text-[11px]">
+              <a
+                href={settings.registrationFormUrl || LIVE_REGISTRATION_FORM_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="text-sky-700 hover:underline flex items-center gap-1 font-medium"
+              >
+                <ExternalLink className="w-3 h-3" /> ฟอร์มลงทะเบียนผู้เช่า
+              </a>
+              <span className="text-slate-300">•</span>
+              <a
+                href={settings.paymentFormUrl || LIVE_PAYMENT_FORM_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="text-sky-700 hover:underline flex items-center gap-1 font-medium"
+              >
+                <ExternalLink className="w-3 h-3" /> ฟอร์มแจ้งชำระเงิน
+              </a>
+              <span className="text-slate-300">•</span>
+              <a
+                href={informPageUrl || LIVE_INFORM_PAGE_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="text-sky-700 hover:underline flex items-center gap-1 font-medium"
+              >
+                <ExternalLink className="w-3 h-3" /> หน้าเว็บ /inform/
+              </a>
             </div>
           </div>
 

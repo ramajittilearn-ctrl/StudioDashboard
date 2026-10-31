@@ -269,6 +269,7 @@ export const RoomLiveBoard: React.FC<RoomLiveBoardProps> = ({
                             <div className="truncate">
                               <span>👤 {rm.tenantName}</span>
                               {rm.phone && <span className="text-[10px] text-slate-400 block truncate mono-num">📞 {rm.phone}</span>}
+                              {rm.email && <span className="text-[10px] text-slate-400 block truncate">✉️ {rm.email}</span>}
                             </div>
                           ) : (
                             <span className="text-slate-400">ยังไม่มีผู้เช่า</span>

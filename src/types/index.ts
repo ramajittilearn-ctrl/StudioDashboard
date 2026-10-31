@@ -25,6 +25,11 @@ export interface PropertySettings {
   tierGoldSatang: number;       // 350000 = 3,500 THB
   lineChannelAccessToken?: string;
   lineDestinationId?: string;   // Target user or group ID
+  googleAppsScriptUrl?: string; // Web App URL (/exec) from DashboardBridge.gs
+  googleAppsScriptToken?: string; // Secret BRIDGE_TOKEN
+  paymentFormUrl?: string;
+  registrationFormUrl?: string;
+  informPageUrl?: string;
 }
 
 export interface Room {
@@ -36,7 +41,9 @@ export interface Room {
   depositSatang: number;
   tenantName: string;
   phone: string;
+  email?: string;
   lineId?: string;
+  notes?: string;
   startDate?: string;
   parkingType: ParkingType;
   parkingFeeSatang: number;
@@ -116,13 +123,18 @@ export interface Settlement {
 
 export interface FormSubmission {
   id: string;
+  externalKey?: string;
+  sheetRow?: number;
   roomNumber: string;
   tenantName: string;
   amountSatang: number;
+  billingPeriod?: string;
+  paymentCategories?: string;
   transferDate: string;
   transferTime: string;
   bankAccount: string;
   slipUrl: string; // URL or Base64 DataURL
+  driveFileId?: string;
   submittedAt: string;
   status: 'PENDING' | 'RECONCILED' | 'REJECTED';
   matchedInvoiceId?: string;
@@ -132,14 +144,18 @@ export interface FormSubmission {
 
 export interface TenantRegistration {
   id: string;
+  externalKey?: string;
+  sheetRow?: number;
   requestedRoomNumber: string;
   tenantName: string;
   phone: string;
+  email?: string;
   lineId?: string;
   idCardNumber?: string;
   vehicleType: ParkingType;
   licensePlate?: string;
   plannedMoveInDate: string;
+  notes?: string;
   depositPaidSatang: number;
   status: 'PENDING' | 'APPROVED' | 'REJECTED';
   submittedAt: string;

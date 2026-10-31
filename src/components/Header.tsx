@@ -1,7 +1,7 @@
 import React from 'react';
 import { PropertySettings } from '../types';
 import { formatBaht } from '../lib/finance';
-import { Building2, Calendar, Zap, Droplets, Car, Cloud, LogIn, LogOut, CheckCircle2, LayoutDashboard, Crown, ShieldAlert } from 'lucide-react';
+import { Building2, Calendar, Zap, Droplets, Car, Cloud, LogIn, LogOut, CheckCircle2, LayoutDashboard, Crown, ShieldAlert, RefreshCw } from 'lucide-react';
 import { User } from 'firebase/auth';
 import { ADMIN_EMAIL, isUserAdmin } from '../lib/firebase';
 
@@ -17,6 +17,8 @@ interface HeaderProps {
   onOpenReconcileModal?: () => void;
   onOpenRegistrationModal?: () => void;
   onOpenBackupRecallModal?: () => void;
+  onSyncGoogleForms?: () => void;
+  isSyncingForms?: boolean;
   currentUser: User | null;
   onLogin: () => void;
   onLogout: () => void;
@@ -35,6 +37,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenReconcileModal,
   onOpenRegistrationModal,
   onOpenBackupRecallModal,
+  onSyncGoogleForms,
+  isSyncingForms = false,
   currentUser,
   onLogin,
   onLogout,
@@ -236,32 +240,57 @@ export const Header: React.FC<HeaderProps> = ({
         </button>
 
         {/* Quick Modal Triggers on the right side of tab bar */}
-        <div className="ml-auto flex items-center gap-1.5 py-1">
-          {onOpenReconcileModal && pendingSubmissionsCount > 0 && (
+        <div className="ml-auto flex items-center gap-1.5 py-1 whitespace-nowrap">
+          {onSyncGoogleForms && settings.googleAppsScriptUrl && (
             <button
               type="button"
-              onClick={onOpenReconcileModal}
-              className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-semibold flex items-center gap-1 transition animate-pulse"
-              title="ตรวจสอบสลิป Google Form"
+              onClick={onSyncGoogleForms}
+              disabled={isSyncingForms}
+              className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 text-xs font-semibold flex items-center gap-1 transition"
+              title="ดึงข้อมูลสลิปและผู้เช่าลงทะเบียนใหม่จาก Google Form ทันที"
             >
-              <span>💳 ตรวจสลิป</span>
-              <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-slate-950 font-bold text-[10px]">
-                {pendingSubmissionsCount}
-              </span>
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingForms ? 'animate-spin' : ''}`} />
+              <span>ซิงก์ฟอร์ม</span>
             </button>
           )}
 
-          {onOpenRegistrationModal && pendingRegistrationsCount > 0 && (
+          {onOpenReconcileModal && (
+            <button
+              type="button"
+              onClick={onOpenReconcileModal}
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 transition ${
+                pendingSubmissionsCount > 0
+                  ? 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 animate-pulse'
+                  : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300 border border-slate-700'
+              }`}
+              title="ตรวจสอบสลิป Google Form"
+            >
+              <span>💳 ตรวจสลิป</span>
+              {pendingSubmissionsCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-amber-500 text-slate-950 font-bold text-[10px]">
+                  {pendingSubmissionsCount}
+                </span>
+              )}
+            </button>
+          )}
+
+          {onOpenRegistrationModal && (
             <button
               type="button"
               onClick={onOpenRegistrationModal}
-              className="px-2.5 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/40 text-xs font-semibold flex items-center gap-1 transition"
+              className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1 transition ${
+                pendingRegistrationsCount > 0
+                  ? 'bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/40 animate-pulse'
+                  : 'bg-slate-800/80 hover:bg-slate-800 text-slate-300 border border-slate-700'
+              }`}
               title="อนุมัติการลงทะเบียนผู้เช่าใหม่"
             >
               <span>🔔 ลงทะเบียนใหม่</span>
-              <span className="px-1.5 py-0.2 rounded-full bg-sky-500 text-slate-950 font-bold text-[10px]">
-                {pendingRegistrationsCount}
-              </span>
+              {pendingRegistrationsCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-sky-500 text-slate-950 font-bold text-[10px]">
+                  {pendingRegistrationsCount}
+                </span>
+              )}
             </button>
           )}
 

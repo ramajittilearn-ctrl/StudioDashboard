@@ -20,6 +20,7 @@ import {
   addExpense,
   deleteExpense,
   sendLineNotification,
+  syncGoogleFormsFromBridge,
   resetDatabase,
   restoreBackup
 } from './api/client';
@@ -75,8 +76,10 @@ export default function App() {
   const [isReconcileOpen, setIsReconcileOpen] = useState<boolean>(false);
   const [isRegistrationOpen, setIsRegistrationOpen] = useState<boolean>(false);
   const [isBackupRecallOpen, setIsBackupRecallOpen] = useState<boolean>(false);
+  const [isSyncingForms, setIsSyncingForms] = useState<boolean>(false);
 
   const isLocalUpdate = useRef<boolean>(false);
+  const syncingFormsRef = useRef<boolean>(false);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -187,6 +190,56 @@ export default function App() {
       isLocalUpdate.current = false;
     }, 500);
   };
+
+  // Auto-poll Google Forms Bridge (Payments & Tenant Registrations) every 45s and on window focus
+  useEffect(() => {
+    const bridgeUrl = state?.settings.googleAppsScriptUrl?.trim();
+    const bridgeToken = state?.settings.googleAppsScriptToken?.trim();
+    if (!currentUser || !isUserAdmin(currentUser) || !bridgeUrl || !bridgeToken) {
+      return;
+    }
+
+    let cancelled = false;
+    const runBackgroundSync = async () => {
+      if (cancelled || syncingFormsRef.current) return;
+      syncingFormsRef.current = true;
+      try {
+        const res = await syncGoogleFormsFromBridge();
+        if (cancelled) return;
+        if (res.changed) {
+          await syncBothStores(res.state);
+        }
+        if (res.newRegistrationsCount > 0 && res.newPaymentsCount > 0) {
+          showToast(
+            `🔔 มีผู้เช่าลงทะเบียนใหม่ ${res.newRegistrationsCount} รายการ และแจ้งโอนใหม่ ${res.newPaymentsCount} รายการ!`
+          );
+        } else if (res.newRegistrationsCount > 0) {
+          showToast(`🔔 มีผู้เช่าลงทะเบียนใหม่จาก Google Form ${res.newRegistrationsCount} รายการ!`);
+        } else if (res.newPaymentsCount > 0) {
+          showToast(`💳 มีแจ้งชำระเงินแนบสลิปใหม่จาก Google Form ${res.newPaymentsCount} รายการ!`);
+        }
+      } catch (err) {
+        console.warn('Background Google Form sync skipped:', err);
+      } finally {
+        syncingFormsRef.current = false;
+      }
+    };
+
+    runBackgroundSync();
+    const timer = window.setInterval(runBackgroundSync, 45000);
+    const onFocus = () => runBackgroundSync();
+    window.addEventListener('focus', onFocus);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [
+    currentUser?.uid,
+    state?.settings.googleAppsScriptUrl,
+    state?.settings.googleAppsScriptToken
+  ]);
 
   // Firebase Auth Handlers
   const handleGoogleLogin = async () => {
@@ -456,6 +509,26 @@ export default function App() {
     }
   };
 
+  const handleManualSyncForms = async () => {
+    if (syncingFormsRef.current) return;
+    syncingFormsRef.current = true;
+    setIsSyncingForms(true);
+    try {
+      const res = await syncGoogleFormsFromBridge();
+      if (res.changed) {
+        await syncBothStores(res.state);
+      }
+      showToast(
+        `ซิงก์ Google Form สำเร็จ (รออนุมัติเข้าพัก ${res.pendingRegistrationsCount} • รอตรวจสลิป ${res.pendingPaymentsCount})`
+      );
+    } catch (err: any) {
+      showToast('❌ ซิงก์ Google Form ไม่สำเร็จ: ' + (err.message || 'กรุณาตรวจสอบการตั้งค่า'));
+    } finally {
+      syncingFormsRef.current = false;
+      setIsSyncingForms(false);
+    }
+  };
+
   const paymentInvoice = state.invoices.find(i => i.id === paymentInvoiceId) || null;
   const pendingSubmissionsCount = (state.formSubmissions || []).filter(s => s.status === 'PENDING').length;
   const pendingRegistrationsCount = (state.registrations || []).filter(r => r.status === 'PENDING').length;
@@ -475,6 +548,8 @@ export default function App() {
         onOpenReconcileModal={() => setIsReconcileOpen(true)}
         onOpenRegistrationModal={() => setIsRegistrationOpen(true)}
         onOpenBackupRecallModal={() => setIsBackupRecallOpen(true)}
+        onSyncGoogleForms={handleManualSyncForms}
+        isSyncingForms={isSyncingForms}
         currentUser={currentUser}
         onLogin={handleGoogleLogin}
         onLogout={handleGoogleLogout}
@@ -567,6 +642,7 @@ export default function App() {
             onDeleteExpense={handleDeleteExpense}
             onResetDatabase={handleResetDb}
             onRestoreBackup={handleRestoreBackupState}
+            onRefreshState={refreshServerState}
           />
         )}
 
@@ -630,6 +706,7 @@ export default function App() {
         submissions={state.formSubmissions || []}
         rooms={state.rooms}
         invoices={state.invoices}
+        settings={state.settings}
         onRefreshState={refreshServerState}
       />
 

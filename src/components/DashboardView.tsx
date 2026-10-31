@@ -112,9 +112,36 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Google Form Connection Prompt if not configured yet */}
+      {(!settings.googleAppsScriptUrl || !settings.googleAppsScriptToken) && onOpenRegistrationModal && (
+        <div className="bg-slate-900 border border-sky-500/40 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 text-xs shadow-md">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-sky-500/20 text-sky-400 border border-sky-500/40 flex items-center justify-center font-bold text-base shrink-0">
+              🔗
+            </div>
+            <div>
+              <div className="font-bold text-white text-sm">
+                เชื่อมต่อ Google Form จริงของหอพัก (ลงทะเบียนผู้เช่า + แจ้งชำระเงิน)
+              </div>
+              <p className="text-slate-300 text-[11px] mt-0.5">
+                ผูก Web App URL ของ Google Sheet เพียงครั้งเดียว เพื่อให้ระบบแจ้งเตือนเมื่อมีผู้เช่าลงทะเบียนหรือส่งสลิปใหม่ และกดอนุมัติเข้าห้องได้ทันที
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenRegistrationModal}
+            className="px-4 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold shadow-md transition flex items-center gap-1.5 shrink-0"
+          >
+            <span>⚙️ ตั้งค่าเชื่อมต่อ Google Form</span>
+            <ArrowUpRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Pending Google Form Payment Slips Alert Banner */}
       {pendingSubmissions.length > 0 && (
-        <div className="bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-transparent border border-amber-500/40 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 text-xs shadow-md">
+        <div className="bg-slate-900 bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-slate-900 border border-amber-500/50 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 text-xs shadow-md">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center justify-center font-bold text-base shrink-0 animate-pulse">
               💳
@@ -136,7 +163,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             onClick={onOpenReconcileModal}
             className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold shadow-md transition flex items-center gap-1.5 shrink-0"
           >
-            <span>เปิดตรวจสลิป & ตัดยอด ({pendingSubmissions.length})</span>
+            <span>เปิดตรวจสลิป &amp; ตัดยอด ({pendingSubmissions.length})</span>
             <ArrowUpRight className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -144,7 +171,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* Pending Tenant Registrations Alert Banner */}
       {pendingRegistrations.length > 0 && (
-        <div className="bg-gradient-to-r from-sky-500/20 via-sky-500/10 to-transparent border border-sky-500/40 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 text-xs shadow-md">
+        <div className="bg-slate-900 bg-gradient-to-r from-sky-500/20 via-sky-500/10 to-slate-900 border border-sky-500/50 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 text-xs shadow-md">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-sky-500/20 text-sky-400 border border-sky-500/40 flex items-center justify-center font-bold text-base shrink-0 animate-bounce">
               🔔
@@ -157,7 +184,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </span>
               </div>
               <p className="text-slate-300 text-[11px] mt-0.5">
-                ผู้เช่ากรอกข้อมูลสมัครเข้าพัก ตรวจสอบห้องว่างและกดยืนยันเพื่อบันทึกเข้าห้องพักได้ทันที
+                ผู้เช่ากรอกข้อมูลสมัครเข้าพักผ่าน Google Form ตรวจสอบห้องว่างและกดยืนยันเพื่อบันทึกผู้เช่าเข้าห้องพักได้ทันที
               </p>
             </div>
           </div>
@@ -166,7 +193,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             onClick={onOpenRegistrationModal}
             className="px-4 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold shadow-md transition flex items-center gap-1.5 shrink-0"
           >
-            <span>ตรวจสอบคำขอลงทะเบียน ({pendingRegistrations.length})</span>
+            <span>อนุมัติผู้เช่าเข้าห้อง ({pendingRegistrations.length})</span>
             <ArrowUpRight className="w-3.5 h-3.5" />
           </button>
         </div>

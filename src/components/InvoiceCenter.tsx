@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { AppState, Invoice } from '../types';
 import { calcLateFeeSatang, formatBaht } from '../lib/finance';
 import { generatePromptPayPayload, generateQrDataUrl } from '../lib/promptpay';
+import { LIVE_INFORM_PAGE_URL } from '../lib/bridgeScript';
 import { Smartphone, Printer, Copy, Send, CheckCircle2, DollarSign, ExternalLink, Edit3 } from 'lucide-react';
 
 interface InvoiceCenterProps {
@@ -51,11 +52,13 @@ export const InvoiceCenter: React.FC<InvoiceCenterProps> = ({
     if (!selectedInvoice) return;
     const lateSatang = calcLateFeeSatang(selectedInvoice, simulatedDate, settings);
     const netDue = selectedInvoice.balanceDueSatang + lateSatang;
+    const dueLabel = selectedInvoice.dueDate || `วันที่ ${settings.dueDayNextMonth || 5} ของเดือนถัดไป`;
+    const informUrl = settings.informPageUrl || LIVE_INFORM_PAGE_URL;
 
     const text = [
       `🏢 แจ้งค่าเช่า ${settings.apartmentName} — ห้อง ${selectedInvoice.roomNumber}`,
       `ผู้เช่า: ${selectedInvoice.tenantName} (แพ็กเกจ ${selectedInvoice.tier})`,
-      `รอบตัดบิล: ${selectedInvoice.issueDate} (กำหนดชำระภายใน 5 พ.ย.)`,
+      `รอบตัดบิล: ${selectedInvoice.issueDate} (กำหนดชำระภายใน ${dueLabel})`,
       `--------------------------------`,
       `• ค่าเช่าห้องพัก: ${formatBaht(selectedInvoice.rentSatang)} บาท`,
       selectedInvoice.parkingFeeSatang > 0 ? `• ค่าจอดรถ (${selectedInvoice.parkingType === 'CAR' ? 'รถยนต์' : 'มอเตอร์ไซค์'}): ${formatBaht(selectedInvoice.parkingFeeSatang)} บาท` : null,
@@ -63,12 +66,14 @@ export const InvoiceCenter: React.FC<InvoiceCenterProps> = ({
       `• ค่าไฟ (${selectedInvoice.prevElec} → ${selectedInvoice.currElec} = ${selectedInvoice.elecUnits} หน่วย): ${formatBaht(selectedInvoice.elecSatang)} บาท`,
       selectedInvoice.arrearsSatang > 0 ? `• ยอดค้างยกมา: ${formatBaht(selectedInvoice.arrearsSatang)} บาท` : null,
       lateSatang > 0 ? `• ค่าปรับเกินกำหนด: ${formatBaht(lateSatang)} บาท` : null,
+      selectedInvoice.discountSatang && selectedInvoice.discountSatang > 0 ? `• ส่วนลดพิเศษ: -${formatBaht(selectedInvoice.discountSatang)} บาท` : null,
       selectedInvoice.paidSatang > 0 ? `• ชำระแล้วบางส่วน: -${formatBaht(selectedInvoice.paidSatang)} บาท` : null,
       `--------------------------------`,
       `✅ ยอดสุทธิที่ต้องโอน: ${formatBaht(netDue)} บาท`,
       `📲 PromptPay: ${settings.promptPayId}`,
       `🏦 บัญชี: ${settings.bankName} ${settings.bankAccount} (${settings.bankOwner})`,
-      `โอนแล้วกรุณาส่งรูปสลิปตอบกลับแชทนี้ ขอบคุณครับ`
+      `🔗 แจ้งชำระเงิน/แนบสลิป: ${informUrl}`,
+      `โอนแล้วกรุณาแจ้งชำระผ่านลิงก์ด้านบนหรือส่งสลิปตอบกลับแชทนี้ ขอบคุณครับ`
     ].filter(Boolean).join('\n');
 
     if (navigator.clipboard) {
@@ -95,8 +100,10 @@ export const InvoiceCenter: React.FC<InvoiceCenterProps> = ({
     if (!selectedInvoice) return;
     const lateSatang = calcLateFeeSatang(selectedInvoice, simulatedDate, settings);
     const netDue = selectedInvoice.balanceDueSatang + lateSatang;
+    const dueLabel = selectedInvoice.dueDate || `วันที่ ${settings.dueDayNextMonth || 5} ของเดือนถัดไป`;
+    const informUrl = settings.informPageUrl || LIVE_INFORM_PAGE_URL;
     const text = encodeURIComponent(
-      `🏢 แจ้งค่าเช่า ${settings.apartmentName} ห้อง ${selectedInvoice.roomNumber}\nผู้เช่า: ${selectedInvoice.tenantName}\nยอดสุทธิ: ${formatBaht(netDue)} บาท\nสแกนพร้อมเพย์: ${settings.promptPayId}\nบัญชี: ${settings.bankName} ${settings.bankAccount}`
+      `🏢 แจ้งค่าเช่า ${settings.apartmentName} ห้อง ${selectedInvoice.roomNumber}\nผู้เช่า: ${selectedInvoice.tenantName}\nกำหนดชำระภายใน: ${dueLabel}\nยอดสุทธิ: ${formatBaht(netDue)} บาท\nสแกนพร้อมเพย์: ${settings.promptPayId}\nบัญชี: ${settings.bankName} ${settings.bankAccount}\nแจ้งชำระเงิน/แนบสลิป: ${informUrl}`
     );
     window.open(`https://line.me/R/msg/text/?${text}`, '_blank');
   };
@@ -216,7 +223,7 @@ export const InvoiceCenter: React.FC<InvoiceCenterProps> = ({
                         เลขที่บิล: <span className="mono-num">{selectedInvoice.id}</span>
                       </div>
                       <div className="text-[11px] text-rose-600 font-semibold mt-0.5">
-                        กำหนดชำระภายใน: วันที่ {settings.dueDayNextMonth} พ.ย. 2026
+                        กำหนดชำระภายใน: {selectedInvoice.dueDate || `วันที่ ${settings.dueDayNextMonth || 5} ของเดือนถัดไป`}
                       </div>
                     </div>
                     <div className="text-right">
@@ -458,7 +465,9 @@ export const InvoiceCenter: React.FC<InvoiceCenterProps> = ({
                     <div>
                       <div className="text-sm font-extrabold text-slate-900">{settings.apartmentName}</div>
                       <div className="text-[11px] text-slate-500">ใบแจ้งหนี้ / ใบเสร็จรับเงิน</div>
-                      <div className="text-[10px] text-slate-400">รอบบิล {inv.billingPeriod} • กำหนดจ่าย 5 พ.ย.</div>
+                      <div className="text-[10px] text-slate-400">
+                        รอบบิล {inv.billingPeriod} • กำหนดจ่าย {inv.dueDate || `วันที่ ${settings.dueDayNextMonth || 5}`}
+                      </div>
                     </div>
                     <div className="text-right">
                       <span className="px-2 py-0.5 rounded bg-slate-900 text-white font-extrabold text-xs mono-num">
