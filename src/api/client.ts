@@ -8,9 +8,7 @@ import {
   TenantRegistration
 } from '../types';
 import { calcLateFeeSatang, calcMeterUnits, formatBaht } from '../lib/finance';
-import { loadStateFromFirestore, saveStateToFirestore } from '../lib/firebase';
-
-const LOCAL_STORAGE_KEY = 'taky_apartment_erp_state_v1';
+import { saveStateToFirestore } from '../lib/firebase';
 
 export function createDayOneState(): AppState {
   const settings: PropertySettings = {
@@ -228,7 +226,20 @@ export function createInitialSeedState(): AppState {
   };
 }
 
+/**
+ * Cloud-only state layer.
+ *
+ * The single source of truth is Firestore `app_state/current`. The in-memory cache
+ * is ONLY populated from data that was actually read from Firestore (via
+ * setClientCachedState, called by App after an authenticated admin read).
+ * There is intentionally no fallback to localStorage, the local Express server or
+ * demo seed data: falling back and then writing would overwrite the real cloud data.
+ */
 let cachedState: AppState | null = null;
+
+function cloneState<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value));
+}
 
 function normalizeState(s: AppState): AppState {
   return {
@@ -240,90 +251,52 @@ function normalizeState(s: AppState): AppState {
   };
 }
 
-function saveLocalCache(state: AppState): void {
-  cachedState = normalizeState(state);
-  try {
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(cachedState));
-  } catch {
-    // ignore storage quota errors
-  }
+export function isValidAppState(s: unknown): s is AppState {
+  const st = s as AppState | null;
+  return Boolean(st && Array.isArray(st.rooms) && st.rooms.length === 15 && st.settings && Array.isArray(st.invoices));
 }
+
+const NOT_LOADED_ERROR = 'ยังไม่ได้โหลดข้อมูลจาก Cloud — กรุณาเข้าสู่ระบบด้วยบัญชี Admin ก่อน';
 
 async function getActiveState(): Promise<AppState> {
-  if (cachedState && Array.isArray(cachedState.rooms) && cachedState.rooms.length === 15) {
-    return JSON.parse(JSON.stringify(cachedState));
+  if (!cachedState) {
+    throw new Error(NOT_LOADED_ERROR);
   }
-
-  try {
-    const remote = await loadStateFromFirestore();
-    if (remote && Array.isArray(remote.rooms) && remote.rooms.length === 15) {
-      saveLocalCache(remote);
-      return JSON.parse(JSON.stringify(cachedState));
-    }
-  } catch {
-    // fallback below
-  }
-
-  try {
-    const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed && Array.isArray(parsed.rooms) && parsed.rooms.length === 15) {
-        saveLocalCache(parsed);
-        return JSON.parse(JSON.stringify(cachedState));
-      }
-    }
-  } catch {
-    // fallback below
-  }
-
-  try {
-    const res = await fetch('/api/state');
-    if (res.ok) {
-      const serverData = await res.json();
-      if (serverData && Array.isArray(serverData.rooms) && serverData.rooms.length === 15) {
-        saveLocalCache(serverData);
-        return JSON.parse(JSON.stringify(cachedState));
-      }
-    }
-  } catch {
-    // fallback to seed state
-  }
-
-  const initial = createInitialSeedState();
-  saveLocalCache(initial);
-  return JSON.parse(JSON.stringify(initial));
+  return cloneState(cachedState);
 }
 
-async function persistState(state: AppState, apiPromise?: Promise<Response>): Promise<AppState> {
-  state.lastBackupDate = new Date().toISOString();
-  saveLocalCache(state);
-
-  if (apiPromise) {
-    try {
-      const res = await apiPromise;
-      if (res.ok) {
-        const data = await res.json();
-        if (data && data.state && Array.isArray(data.state.rooms)) {
-          saveLocalCache(data.state);
-        }
-      }
-    } catch {
-      // Static production mode (GitHub Pages) - local + Firestore handles persistence
-    }
+/**
+ * Writes the full state to Firestore. The cache is updated only after the write
+ * succeeds; on failure the error is re-thrown so the UI can tell the user that
+ * nothing was saved.
+ */
+async function persistState(state: AppState): Promise<AppState> {
+  if (!cachedState) {
+    throw new Error(NOT_LOADED_ERROR);
   }
-
-  try {
-    await saveStateToFirestore(cachedState!);
-  } catch {
-    // Firestore sync handled or offline
+  if (!isValidAppState(state)) {
+    throw new Error('ข้อมูลไม่ถูกต้อง (ต้องมี 15 ห้อง) — ยกเลิกการบันทึก');
   }
-
-  return JSON.parse(JSON.stringify(cachedState!));
+  const next = normalizeState(cloneState(state));
+  next.lastBackupDate = new Date().toISOString();
+  await saveStateToFirestore(next);
+  cachedState = next;
+  return cloneState(next);
 }
 
+/** Only call with data that was read from Firestore (initial load or snapshot). */
 export function setClientCachedState(state: AppState): void {
-  saveLocalCache(state);
+  cachedState = normalizeState(cloneState(state));
+}
+
+export function clearClientCachedState(): void {
+  cachedState = null;
+  try {
+    // Remove any tenant data left behind by the previous localStorage-based build.
+    localStorage.removeItem('taky_apartment_erp_state_v1');
+  } catch {
+    // ignore
+  }
 }
 
 export async function fetchAppState(): Promise<AppState> {
@@ -335,27 +308,13 @@ export async function updateSimulatedDate(simulatedDate: string): Promise<AppSta
   if (simulatedDate) {
     state.simulatedDate = simulatedDate;
   }
-  return persistState(
-    state,
-    fetch('/api/simulated-date', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ simulatedDate })
-    })
-  );
+  return persistState(state);
 }
 
 export async function updateSettings(settings: Partial<PropertySettings>): Promise<AppState> {
   const state = await getActiveState();
   state.settings = { ...state.settings, ...settings };
-  return persistState(
-    state,
-    fetch('/api/settings', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(settings)
-    })
-  );
+  return persistState(state);
 }
 
 export async function batchSetupRooms(rooms: Room[]): Promise<AppState> {
@@ -364,14 +323,7 @@ export async function batchSetupRooms(rooms: Room[]): Promise<AppState> {
     state.rooms = rooms;
     state.invoices = [];
   }
-  return persistState(
-    state,
-    fetch('/api/rooms/batch-setup', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rooms })
-    })
-  );
+  return persistState(state);
 }
 
 export async function submitMoveIn(payload: any): Promise<AppState> {
@@ -415,14 +367,7 @@ export async function submitMoveIn(payload: any): Promise<AppState> {
     rm.arrearsSatang = 0;
   }
 
-  return persistState(
-    state,
-    fetch('/api/rooms/move-in', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    })
-  );
+  return persistState(state);
 }
 
 export async function submitReservation(payload: any): Promise<AppState> {
@@ -446,14 +391,7 @@ export async function submitReservation(payload: any): Promise<AppState> {
     rm.bookingDepositSatang = Number(depositSatang) || 100000;
   }
 
-  return persistState(
-    state,
-    fetch('/api/rooms/reserve', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    })
-  );
+  return persistState(state);
 }
 
 export async function cancelReservation(roomNumber: string): Promise<AppState> {
@@ -467,14 +405,7 @@ export async function cancelReservation(roomNumber: string): Promise<AppState> {
     rm.bookingDepositSatang = 0;
   }
 
-  return persistState(
-    state,
-    fetch('/api/rooms/cancel-reservation', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ roomNumber })
-    })
-  );
+  return persistState(state);
 }
 
 export async function markMaintenanceDone(roomNumber: string): Promise<AppState> {
@@ -487,14 +418,7 @@ export async function markMaintenanceDone(roomNumber: string): Promise<AppState>
     rm.lineId = '';
   }
 
-  return persistState(
-    state,
-    fetch('/api/rooms/maintenance-done', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ roomNumber })
-    })
-  );
+  return persistState(state);
 }
 
 export async function commitBulkMeters(readings: any[]): Promise<AppState> {
@@ -576,14 +500,7 @@ export async function commitBulkMeters(readings: any[]): Promise<AppState> {
     });
   }
 
-  return persistState(
-    state,
-    fetch('/api/meters/bulk-commit', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ readings })
-    })
-  );
+  return persistState(state);
 }
 
 export async function updateInvoice(payload: any): Promise<AppState> {
@@ -642,14 +559,7 @@ export async function updateInvoice(payload: any): Promise<AppState> {
     }
   }
 
-  return persistState(
-    state,
-    fetch('/api/invoices/update', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    })
-  );
+  return persistState(state);
 }
 
 export async function recordPayment(payload: {
@@ -692,14 +602,7 @@ export async function recordPayment(payload: {
     }
   }
 
-  return persistState(
-    state,
-    fetch('/api/payments', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    })
-  );
+  return persistState(state);
 }
 
 export async function submitMoveOut(payload: any): Promise<{ state: AppState; netRefundSatang: number }> {
@@ -782,14 +685,7 @@ export async function submitMoveOut(payload: any): Promise<{ state: AppState; ne
     rm.arrearsSatang = 0;
   }
 
-  const nextState = await persistState(
-    state,
-    fetch('/api/rooms/move-out', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    })
-  );
+  const nextState = await persistState(state);
   return { state: nextState, netRefundSatang };
 }
 
@@ -810,20 +706,13 @@ export async function addExpense(payload: {
     });
   }
 
-  return persistState(
-    state,
-    fetch('/api/expenses', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    })
-  );
+  return persistState(state);
 }
 
 export async function deleteExpense(id: string): Promise<AppState> {
   const state = await getActiveState();
   state.expenses = state.expenses.filter(e => e.id !== id);
-  return persistState(state, fetch(`/api/expenses/${id}`, { method: 'DELETE' }));
+  return persistState(state);
 }
 
 export async function testLineConnection(
@@ -965,14 +854,7 @@ export async function submitGoogleFormPayment(payload: any): Promise<{ success: 
   };
 
   state.formSubmissions.unshift(submission);
-  const nextState = await persistState(
-    state,
-    fetch('/api/webhooks/google-form/payment', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    })
-  );
+  const nextState = await persistState(state);
   return { success: true, state: nextState };
 }
 
@@ -995,14 +877,7 @@ export async function manualUploadSlip(payload: any): Promise<{ success: boolean
   };
 
   state.formSubmissions.unshift(submission);
-  const nextState = await persistState(
-    state,
-    fetch('/api/reconcile/manual-upload', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    })
-  );
+  const nextState = await persistState(state);
   return { success: true, state: nextState };
 }
 
@@ -1047,14 +922,7 @@ export async function approveReconcile(
     sub.adminNote = note || 'ยืนยันยอดเงินเข้าบัญชีเรียบร้อย';
   }
 
-  const nextState = await persistState(
-    state,
-    fetch('/api/reconcile/approve', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ submissionId, invoiceId, note })
-    })
-  );
+  const nextState = await persistState(state);
   return { success: true, state: nextState };
 }
 
@@ -1070,14 +938,7 @@ export async function rejectReconcile(
     sub.adminNote = reason || 'สลิปไม่ตรง / ตรวจสอบไม่พบยอดเงินในบัญชี';
   }
 
-  const nextState = await persistState(
-    state,
-    fetch('/api/reconcile/reject', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ submissionId, reason })
-    })
-  );
+  const nextState = await persistState(state);
   return { success: true, state: nextState };
 }
 
@@ -1112,14 +973,7 @@ export async function submitRegistration(payload: any): Promise<{ success: boole
   };
 
   state.registrations.unshift(reg);
-  const nextState = await persistState(
-    state,
-    fetch('/api/webhooks/google-form/register', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    })
-  );
+  const nextState = await persistState(state);
   return { success: true, state: nextState };
 }
 
@@ -1169,14 +1023,7 @@ export async function approveRegistration(payload: any): Promise<{ success: bool
     }
   }
 
-  const nextState = await persistState(
-    state,
-    fetch('/api/registrations/approve', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    })
-  );
+  const nextState = await persistState(state);
   return { success: true, state: nextState };
 }
 
@@ -1192,20 +1039,13 @@ export async function rejectRegistration(
     reg.adminNote = reason || 'ยกเลิก / ไม่ผ่านการอนุมัติ';
   }
 
-  const nextState = await persistState(
-    state,
-    fetch('/api/registrations/reject', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ registrationId, reason })
-    })
-  );
+  const nextState = await persistState(state);
   return { success: true, state: nextState };
 }
 
 export async function resetToDayOne(): Promise<{ success: boolean; state: AppState; message: string }> {
   const dayOne = createDayOneState();
-  const nextState = await persistState(dayOne, fetch('/api/reset-day-one', { method: 'POST' }));
+  const nextState = await persistState(dayOne);
   return {
     success: true,
     state: nextState,
@@ -1215,7 +1055,7 @@ export async function resetToDayOne(): Promise<{ success: boolean; state: AppSta
 
 export async function resetToDemo(): Promise<{ success: boolean; state: AppState; message: string }> {
   const demo = createInitialSeedState();
-  const nextState = await persistState(demo, fetch('/api/reset-demo', { method: 'POST' }));
+  const nextState = await persistState(demo);
   return {
     success: true,
     state: nextState,
@@ -1258,14 +1098,7 @@ export async function createBackup(
     state.backups = state.backups.slice(0, 20);
   }
 
-  const nextState = await persistState(
-    state,
-    fetch('/api/backups/create', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, tag })
-    })
-  );
+  const nextState = await persistState(state);
   return { success: true, state: nextState };
 }
 
@@ -1281,14 +1114,7 @@ export async function recallBackup(
 
   const restored = JSON.parse(snap.stateData);
   restored.backups = existingBackups;
-  const nextState = await persistState(
-    restored,
-    fetch('/api/backups/recall', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ snapshotId })
-    })
-  );
+  const nextState = await persistState(restored);
   return {
     success: true,
     state: nextState,
@@ -1302,14 +1128,7 @@ export async function resetDatabase(): Promise<AppState> {
 }
 
 export async function restoreBackup(backupState: AppState): Promise<AppState> {
-  return persistState(
-    backupState,
-    fetch('/api/backup/restore', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(backupState)
-    })
-  );
+  return persistState(backupState);
 }
 
 export function downloadStateJson(state: AppState): void {

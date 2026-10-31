@@ -154,7 +154,11 @@ export function subscribeToFirestoreState(
       }
     },
     (error) => {
-      if (onError) onError(error);
+      if (onError) {
+        console.error('Firestore subscription error:', error);
+        onError(error);
+        return;
+      }
       handleFirestoreError(error, OperationType.GET, STATE_DOC_PATH);
     }
   );

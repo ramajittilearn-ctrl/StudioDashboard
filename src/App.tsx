@@ -3,6 +3,9 @@ import { AppState, Room } from './types';
 import {
   fetchAppState,
   setClientCachedState,
+  clearClientCachedState,
+  createDayOneState,
+  isValidAppState,
   updateSimulatedDate,
   updateSettings,
   batchSetupRooms,
@@ -24,11 +27,9 @@ import {
   auth,
   loginWithGoogle,
   logoutFirebase,
-  testConnection,
   saveStateToFirestore,
   loadStateFromFirestore,
   subscribeToFirestoreState,
-  ADMIN_EMAIL,
   isUserAdmin
 } from './lib/firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
@@ -58,6 +59,7 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isCloudSynced, setIsCloudSynced] = useState<boolean>(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Selected invoice for LINE card preview
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | undefined>(undefined);
@@ -82,81 +84,131 @@ export default function App() {
     }, 3200);
   };
 
-  // 1. Initial State Loading from Firebase & Server
+  // 1. Load state ONLY from Firestore, ONLY after an admin is signed in.
+  //    No fallback to localStorage / local server / demo data — a fallback followed by a
+  //    write would overwrite the real cloud data (bug A1).
   useEffect(() => {
-    const initApp = async () => {
-      testConnection();
+    let unsubscribeFirestore: (() => void) | null = null;
+    let authGeneration = 0;
 
-      const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-        setCurrentUser(user);
-      });
-
-      try {
-        let remoteState = await loadStateFromFirestore();
-
-        if (remoteState && Array.isArray(remoteState.rooms) && remoteState.rooms.length === 15) {
-          setClientCachedState(remoteState);
-          setState(remoteState);
-          setIsCloudSynced(true);
-          if (remoteState.invoices && remoteState.invoices.length > 0) {
-            setSelectedInvoiceId(remoteState.invoices[0].id);
-          }
-        } else {
-          const serverState = await fetchAppState();
-          setClientCachedState(serverState);
-          setState(serverState);
-          if (serverState.invoices && serverState.invoices.length > 0) {
-            setSelectedInvoiceId(serverState.invoices[0].id);
-          }
-          await saveStateToFirestore(serverState);
-          setIsCloudSynced(true);
-        }
-      } catch (err) {
-        console.warn('Could not read from Firestore, falling back to local server:', err);
-        const serverState = await fetchAppState();
-        setClientCachedState(serverState);
-        setState(serverState);
-        if (serverState.invoices && serverState.invoices.length > 0) {
-          setSelectedInvoiceId(serverState.invoices[0].id);
-        }
-      } finally {
-        setLoading(false);
-      }
-
-      // 2. Subscribe to real-time changes from Firestore
-      const unsubscribeFirestore = subscribeToFirestoreState((cloudState) => {
-        if (!isLocalUpdate.current) {
-          setClientCachedState(cloudState);
-          setState(cloudState);
-          setIsCloudSynced(true);
-        }
-      });
-
-      return () => {
-        unsubscribeAuth();
+    const stopSubscription = () => {
+      if (unsubscribeFirestore) {
         unsubscribeFirestore();
-      };
+        unsubscribeFirestore = null;
+      }
     };
 
-    initApp();
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      const generation = ++authGeneration;
+      stopSubscription();
+      clearClientCachedState();
+      setState(null);
+      setIsCloudSynced(false);
+      setLoadError(null);
+      setCurrentUser(user);
+
+      if (!user) {
+        setLoading(false);
+        return;
+      }
+      if (!isUserAdmin(user)) {
+        setLoadError(`บัญชี ${user.email} ไม่มีสิทธิ์เข้าถึงข้อมูลหอพัก (เฉพาะ Admin เท่านั้น)`);
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      try {
+        let remoteState = await loadStateFromFirestore();
+        if (generation !== authGeneration) return;
+
+        if (remoteState === null) {
+          // Read succeeded and the document truly does not exist.
+          const ok = window.confirm(
+            'ไม่พบข้อมูลหอพักใน Cloud (app_state/current)\n\nต้องการเริ่มต้นระบบวันแรก (15 ห้องว่าง ไม่มีบิล) หรือไม่?\n\nกด "ยกเลิก" หากคิดว่าข้อมูลควรมีอยู่แล้ว แล้วตรวจสอบ Firebase ก่อน'
+          );
+          if (!ok) {
+            setLoadError('ยังไม่ได้เริ่มต้นข้อมูล — ไม่พบ app_state/current ใน Firestore');
+            return;
+          }
+          remoteState = createDayOneState();
+          await saveStateToFirestore(remoteState);
+        }
+
+        if (!isValidAppState(remoteState)) {
+          setLoadError('ข้อมูลใน Cloud มีรูปแบบไม่ถูกต้อง (ต้องมี 15 ห้อง) — ระบบจะไม่เขียนทับข้อมูล');
+          return;
+        }
+
+        setClientCachedState(remoteState);
+        setState(remoteState);
+        setIsCloudSynced(true);
+        if (remoteState.invoices.length > 0) {
+          setSelectedInvoiceId(remoteState.invoices[0].id);
+        }
+
+        // 2. Real-time updates (only after a successful authenticated read)
+        unsubscribeFirestore = subscribeToFirestoreState(
+          (cloudState) => {
+            if (generation !== authGeneration) return;
+            if (!isLocalUpdate.current) {
+              setClientCachedState(cloudState);
+              setState(cloudState);
+            }
+            setIsCloudSynced(true);
+          },
+          () => {
+            if (generation === authGeneration) setIsCloudSynced(false);
+          }
+        );
+      } catch (err: any) {
+        if (generation !== authGeneration) return;
+        console.error('Failed to load state from Firestore:', err);
+        setLoadError('โหลดข้อมูลจาก Cloud ไม่สำเร็จ — ระบบจะไม่แสดงหรือบันทึกข้อมูลจนกว่าจะโหลดสำเร็จ');
+      } finally {
+        if (generation === authGeneration) setLoading(false);
+      }
+    });
+
+    return () => {
+      authGeneration++;
+      unsubscribeAuth();
+      stopSubscription();
+    };
   }, []);
 
+  // API functions already wrote to Firestore successfully before returning.
   const syncBothStores = async (nextState: AppState) => {
-    setState(nextState);
     isLocalUpdate.current = true;
+    setState(nextState);
+    setIsCloudSynced(true);
+    setTimeout(() => {
+      isLocalUpdate.current = false;
+    }, 500);
+  };
+
+  // Firebase Auth Handlers
+  const handleGoogleLogin = async () => {
     try {
-      await saveStateToFirestore(nextState);
-      setIsCloudSynced(true);
-    } catch (err) {
-      console.warn('Firestore cloud sync failed:', err);
-    } finally {
-      setTimeout(() => {
-        isLocalUpdate.current = false;
-      }, 500);
+      const user = await loginWithGoogle();
+      if (isUserAdmin(user)) {
+        showToast(`👑 ยินดีต้อนรับ Admin: ${user.email}`);
+      }
+    } catch (err: any) {
+      showToast('เข้าสู่ระบบไม่สำเร็จ: ' + (err.message || 'Error'));
     }
   };
 
-  if (loading || !state) {
+  const handleGoogleLogout = async () => {
+    try {
+      await logoutFirebase();
+      showToast('ออกจากระบบเรียบร้อย');
+    } catch (err: any) {
+      showToast('เกิดข้อผิดพลาดในการออกจากระบบ');
+    }
+  };
+
+  if (loading) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white">
         <div className="text-center space-y-3">
@@ -167,32 +219,55 @@ export default function App() {
     );
   }
 
+  if (!currentUser || loadError || !state) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white p-4">
+        <div className="max-w-md w-full bg-slate-800 border border-slate-700 rounded-2xl p-6 text-center space-y-4">
+          <h1 className="text-lg font-bold">Taky Apartment ERP</h1>
+          {!currentUser ? (
+            <>
+              <p className="text-sm text-slate-300">กรุณาเข้าสู่ระบบด้วยบัญชี Google ของ Admin เพื่อเข้าถึงข้อมูลหอพัก</p>
+              <button
+                type="button"
+                onClick={handleGoogleLogin}
+                className="w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 font-bold text-sm transition"
+              >
+                เข้าสู่ระบบด้วย Google
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-rose-300">{loadError || 'ไม่สามารถโหลดข้อมูลได้'}</p>
+              <p className="text-xs text-slate-400">เข้าสู่ระบบอยู่ในชื่อ {currentUser.email}</p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => window.location.reload()}
+                  className="flex-1 py-2 rounded-xl bg-slate-700 hover:bg-slate-600 text-sm transition"
+                >
+                  ลองใหม่
+                </button>
+                <button
+                  type="button"
+                  onClick={handleGoogleLogout}
+                  className="flex-1 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-sm font-semibold transition"
+                >
+                  ออกจากระบบ
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+        {toastMessage && (
+          <div className="fixed bottom-5 right-5 z-50 bg-slate-950 text-white px-4 py-3 rounded-xl border border-slate-700 text-xs font-semibold">
+            {toastMessage}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   const unpaidCount = state.invoices.filter(i => i.status !== 'ROLLED_OVER' && i.balanceDueSatang > 0).length;
-
-  // Firebase Auth Handlers
-  const handleGoogleLogin = async () => {
-    try {
-      const user = await loginWithGoogle();
-      setCurrentUser(user);
-      if (isUserAdmin(user)) {
-        showToast(`👑 ยินดีต้อนรับ Admin สูงสุด: ${user.email} (สิทธิ์เต็ม)`);
-      } else {
-        showToast(`เข้าสู่ระบบสำเร็จ: ${user.email} (สิทธิ์ดูข้อมูลทั่วไป — ผู้ดูแลสูงสุดคือ ${ADMIN_EMAIL})`);
-      }
-    } catch (err: any) {
-      showToast('เข้าสู่ระบบไม่สำเร็จ: ' + (err.message || 'Error'));
-    }
-  };
-
-  const handleGoogleLogout = async () => {
-    try {
-      await logoutFirebase();
-      setCurrentUser(null);
-      showToast('ออกจากระบบเรียบร้อย');
-    } catch (err: any) {
-      showToast('เกิดข้อผิดพลาดในการออกจากระบบ');
-    }
-  };
 
   // State mutation Handlers
   const handleSimulatedDateChange = async (date: string) => {
