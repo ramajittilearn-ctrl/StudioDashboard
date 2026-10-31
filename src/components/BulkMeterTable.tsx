@@ -108,14 +108,18 @@ export const BulkMeterTable: React.FC<BulkMeterTableProps> = ({ state, onCommitI
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <label className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-300 cursor-pointer transition select-none">
+          <label className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border cursor-pointer transition select-none ${
+            allowEditPrev 
+              ? 'bg-amber-100 text-amber-900 border-amber-400 shadow-xs ring-1 ring-amber-400' 
+              : 'bg-amber-50 text-amber-800 hover:bg-amber-100 border-amber-300'
+          }`}>
             <input
               type="checkbox"
               checked={allowEditPrev}
               onChange={(e) => setAllowEditPrev(e.target.checked)}
-              className="accent-amber-600 rounded"
+              className="accent-amber-600 rounded w-4 h-4 cursor-pointer"
             />
-            <span>🔓 ปลดล็อกแก้ไขเลขรอบก่อน</span>
+            <span>{allowEditPrev ? '🔓 กำลังปลดล็อกแก้ไขเลขรอบก่อน' : '✏️ ปลดล็อกแก้ไขเลขรอบก่อน (น้ำ/ไฟ)'}</span>
           </label>
           <button
             type="button"
@@ -243,7 +247,11 @@ export const BulkMeterTable: React.FC<BulkMeterTableProps> = ({ state, onCommitI
                           title="แก้ไขเลขมิเตอร์รอบก่อนหน้า"
                         />
                       ) : (
-                        <span className="text-slate-600 mono-num w-12 text-right font-bold" title="เลขมิเตอร์ดึงมาจากบิลรอบก่อนหน้าอัตโนมัติ">
+                        <span
+                          onClick={() => setAllowEditPrev(true)}
+                          className="text-slate-600 hover:text-amber-800 hover:bg-amber-100/80 px-1 py-0.5 rounded cursor-pointer mono-num w-12 text-right font-bold transition"
+                          title="เลขมิเตอร์ดึงมาจากบิลรอบก่อนหน้าอัตโนมัติ (คลิกเพื่อปลดล็อกแก้ไข)"
+                        >
                           {rd.prevWater}
                         </span>
                       )}
@@ -284,7 +292,11 @@ export const BulkMeterTable: React.FC<BulkMeterTableProps> = ({ state, onCommitI
                           title="แก้ไขเลขมิเตอร์รอบก่อนหน้า"
                         />
                       ) : (
-                        <span className="text-slate-600 mono-num w-12 text-right font-bold" title="เลขมิเตอร์ดึงมาจากบิลรอบก่อนหน้าอัตโนมัติ">
+                        <span
+                          onClick={() => setAllowEditPrev(true)}
+                          className="text-slate-600 hover:text-amber-800 hover:bg-amber-100/80 px-1 py-0.5 rounded cursor-pointer mono-num w-12 text-right font-bold transition"
+                          title="เลขมิเตอร์ดึงมาจากบิลรอบก่อนหน้าอัตโนมัติ (คลิกเพื่อปลดล็อกแก้ไข)"
+                        >
                           {rd.prevElec}
                         </span>
                       )}

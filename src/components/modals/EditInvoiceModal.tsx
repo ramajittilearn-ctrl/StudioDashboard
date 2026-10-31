@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AppState, Invoice } from '../../types';
-import { formatBaht, fromSatang, toSatang } from '../../lib/finance';
+import { calcMeterUnits, formatBaht, fromSatang, toSatang } from '../../lib/finance';
 import { X, Check, Edit3, DollarSign, Tag, AlertCircle, Droplets, Zap, Car } from 'lucide-react';
 
 interface EditInvoiceModalProps {
@@ -26,12 +26,16 @@ export const EditInvoiceModal: React.FC<EditInvoiceModalProps> = ({
   const [parkingFeeBaht, setParkingFeeBaht] = useState<number>(fromSatang(invoice.parkingFeeSatang || 0));
   
   // Water
+  const [prevWater, setPrevWater] = useState<number>(invoice.prevWater);
   const [currWater, setCurrWater] = useState<number>(invoice.currWater);
+  const [waterRoll, setWaterRoll] = useState<boolean>(false);
   const [waterBaht, setWaterBaht] = useState<number>(fromSatang(invoice.waterSatang));
   const [customWaterMoney, setCustomWaterMoney] = useState<boolean>(false);
 
   // Electric
+  const [prevElec, setPrevElec] = useState<number>(invoice.prevElec);
   const [currElec, setCurrElec] = useState<number>(invoice.currElec);
+  const [elecRoll, setElecRoll] = useState<boolean>(false);
   const [elecBaht, setElecBaht] = useState<number>(fromSatang(invoice.elecSatang));
   const [customElecMoney, setCustomElecMoney] = useState<boolean>(false);
 
@@ -46,9 +50,13 @@ export const EditInvoiceModal: React.FC<EditInvoiceModalProps> = ({
   useEffect(() => {
     setRentBaht(fromSatang(invoice.rentSatang));
     setParkingFeeBaht(fromSatang(invoice.parkingFeeSatang || 0));
+    setPrevWater(invoice.prevWater);
     setCurrWater(invoice.currWater);
+    setWaterRoll(false);
     setWaterBaht(fromSatang(invoice.waterSatang));
+    setPrevElec(invoice.prevElec);
     setCurrElec(invoice.currElec);
+    setElecRoll(false);
     setElecBaht(fromSatang(invoice.elecSatang));
     setArrearsBaht(fromSatang(invoice.arrearsSatang || 0));
     setLateFeeBaht(fromSatang(invoice.lateFeeSatang || 0));
@@ -58,26 +66,30 @@ export const EditInvoiceModal: React.FC<EditInvoiceModalProps> = ({
     setCustomElecMoney(false);
   }, [invoice]);
 
-  // Recalculate water when currWater changes unless custom
-  const handleCurrWaterChange = (val: number) => {
-    setCurrWater(val);
+  const waterUnits = Math.max(0, calcMeterUnits(prevWater, currWater, waterRoll));
+  const elecUnits = Math.max(0, calcMeterUnits(prevElec, currElec, elecRoll));
+
+  // Recalculate water when readings change unless custom
+  const handleWaterMeterChange = (newPrev: number, newCurr: number, newRoll: boolean) => {
+    setPrevWater(newPrev);
+    setCurrWater(newCurr);
+    setWaterRoll(newRoll);
     if (!customWaterMoney) {
-      const units = Math.max(0, val - invoice.prevWater);
+      const units = Math.max(0, calcMeterUnits(newPrev, newCurr, newRoll));
       setWaterBaht(fromSatang(units * settings.waterRateSatang));
     }
   };
 
-  // Recalculate electric when currElec changes unless custom
-  const handleCurrElecChange = (val: number) => {
-    setCurrElec(val);
+  // Recalculate electric when readings change unless custom
+  const handleElecMeterChange = (newPrev: number, newCurr: number, newRoll: boolean) => {
+    setPrevElec(newPrev);
+    setCurrElec(newCurr);
+    setElecRoll(newRoll);
     if (!customElecMoney) {
-      const units = Math.max(0, val - invoice.prevElec);
+      const units = Math.max(0, calcMeterUnits(newPrev, newCurr, newRoll));
       setElecBaht(fromSatang(units * settings.electricityRateSatang));
     }
   };
-
-  const waterUnits = Math.max(0, currWater - invoice.prevWater);
-  const elecUnits = Math.max(0, currElec - invoice.prevElec);
 
   const rentSatang = toSatang(rentBaht);
   const parkingSatang = toSatang(parkingFeeBaht);
@@ -99,9 +111,11 @@ export const EditInvoiceModal: React.FC<EditInvoiceModalProps> = ({
       parkingFeeSatang: parkingSatang,
       waterSatang,
       waterUnits,
+      prevWater,
       currWater,
       elecSatang,
       elecUnits,
+      prevElec,
       currElec,
       arrearsSatang,
       lateFeeSatang,
@@ -163,27 +177,48 @@ export const EditInvoiceModal: React.FC<EditInvoiceModalProps> = ({
             <div className="flex items-center justify-between font-bold text-sky-950">
               <span className="flex items-center gap-1">
                 <Droplets className="w-3.5 h-3.5 text-sky-600" />
-                <span>ค่าน้ำประปา (เก่า {invoice.prevWater} → ใหม่ {currWater})</span>
+                <span>ค่าน้ำประปา</span>
               </span>
               <span className="text-[11px] font-normal text-sky-800">
                 {waterUnits} หน่วย × {formatBaht(settings.waterRateSatang)} บ.
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-2">
               <div>
-                <label className="block text-[11px] text-slate-600 mb-0.5">เลขมิเตอร์น้ำใหม่</label>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">มิเตอร์น้ำเก่า (ก่อน)</label>
+                <input
+                  type="number"
+                  value={prevWater}
+                  onChange={(e) => handleWaterMeterChange(parseInt(e.target.value, 10) || 0, currWater, waterRoll)}
+                  className="w-full border border-sky-300 bg-amber-50/60 rounded-lg px-2 py-1.5 mono-num font-bold text-amber-900"
+                  title="แก้ไขเลขมิเตอร์รอบก่อนหน้า"
+                />
+              </div>
+              <div>
+                <div className="flex items-center justify-between">
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">มิเตอร์น้ำใหม่</label>
+                  <label className="flex items-center gap-1 text-[10px] text-sky-800 cursor-pointer mb-0.5">
+                    <input
+                      type="checkbox"
+                      checked={waterRoll}
+                      onChange={(e) => handleWaterMeterChange(prevWater, currWater, e.target.checked)}
+                      className="accent-sky-600"
+                    />
+                    <span>วนรอบ</span>
+                  </label>
+                </div>
                 <input
                   type="number"
                   value={currWater}
-                  onChange={(e) => handleCurrWaterChange(parseInt(e.target.value, 10) || 0)}
-                  className="w-full border border-sky-200 bg-white rounded-lg px-2.5 py-1.5 mono-num font-semibold"
+                  onChange={(e) => handleWaterMeterChange(prevWater, parseInt(e.target.value, 10) || 0, waterRoll)}
+                  className="w-full border border-sky-200 bg-white rounded-lg px-2 py-1.5 mono-num font-bold text-sky-950"
                 />
               </div>
               <div>
                 <label className="block text-[11px] text-slate-600 mb-0.5 flex justify-between">
-                  <span>ยอดเงินค่าน้ำ (บาท)</span>
+                  <span>ยอดเงิน (บาท)</span>
                   <span className="text-[10px] text-sky-600 cursor-pointer" onClick={() => setCustomWaterMoney(!customWaterMoney)}>
-                    {customWaterMoney ? '🔒 ปลดล็อก' : '✏️ กำหนดเอง'}
+                    {customWaterMoney ? '🔒 ล็อก' : '✏️ กำหนดเอง'}
                   </span>
                 </label>
                 <input
@@ -194,7 +229,7 @@ export const EditInvoiceModal: React.FC<EditInvoiceModalProps> = ({
                     setCustomWaterMoney(true);
                     setWaterBaht(parseFloat(e.target.value) || 0);
                   }}
-                  className="w-full border border-sky-200 bg-white rounded-lg px-2.5 py-1.5 mono-num font-bold text-sky-900"
+                  className="w-full border border-sky-200 bg-white rounded-lg px-2 py-1.5 mono-num font-bold text-sky-900"
                 />
               </div>
             </div>
@@ -205,27 +240,48 @@ export const EditInvoiceModal: React.FC<EditInvoiceModalProps> = ({
             <div className="flex items-center justify-between font-bold text-amber-950">
               <span className="flex items-center gap-1">
                 <Zap className="w-3.5 h-3.5 text-amber-600" />
-                <span>ค่าไฟฟ้า (เก่า {invoice.prevElec} → ใหม่ {currElec})</span>
+                <span>ค่าไฟฟ้า</span>
               </span>
               <span className="text-[11px] font-normal text-amber-800">
                 {elecUnits} หน่วย × {formatBaht(settings.electricityRateSatang)} บ.
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-2">
               <div>
-                <label className="block text-[11px] text-slate-600 mb-0.5">เลขมิเตอร์ไฟใหม่</label>
+                <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">มิเตอร์ไฟเก่า (ก่อน)</label>
+                <input
+                  type="number"
+                  value={prevElec}
+                  onChange={(e) => handleElecMeterChange(parseInt(e.target.value, 10) || 0, currElec, elecRoll)}
+                  className="w-full border border-amber-300 bg-amber-50/60 rounded-lg px-2 py-1.5 mono-num font-bold text-amber-900"
+                  title="แก้ไขเลขมิเตอร์รอบก่อนหน้า"
+                />
+              </div>
+              <div>
+                <div className="flex items-center justify-between">
+                  <label className="block text-[11px] font-semibold text-slate-700 mb-0.5">มิเตอร์ไฟใหม่</label>
+                  <label className="flex items-center gap-1 text-[10px] text-amber-800 cursor-pointer mb-0.5">
+                    <input
+                      type="checkbox"
+                      checked={elecRoll}
+                      onChange={(e) => handleElecMeterChange(prevElec, currElec, e.target.checked)}
+                      className="accent-amber-600"
+                    />
+                    <span>วนรอบ</span>
+                  </label>
+                </div>
                 <input
                   type="number"
                   value={currElec}
-                  onChange={(e) => handleCurrElecChange(parseInt(e.target.value, 10) || 0)}
-                  className="w-full border border-amber-200 bg-white rounded-lg px-2.5 py-1.5 mono-num font-semibold"
+                  onChange={(e) => handleElecMeterChange(prevElec, parseInt(e.target.value, 10) || 0, elecRoll)}
+                  className="w-full border border-amber-200 bg-white rounded-lg px-2 py-1.5 mono-num font-bold text-amber-950"
                 />
               </div>
               <div>
                 <label className="block text-[11px] text-slate-600 mb-0.5 flex justify-between">
-                  <span>ยอดเงินค่าไฟ (บาท)</span>
+                  <span>ยอดเงิน (บาท)</span>
                   <span className="text-[10px] text-amber-700 cursor-pointer" onClick={() => setCustomElecMoney(!customElecMoney)}>
-                    {customElecMoney ? '🔒 ปลดล็อก' : '✏️ กำหนดเอง'}
+                    {customElecMoney ? '🔒 ล็อก' : '✏️ กำหนดเอง'}
                   </span>
                 </label>
                 <input
@@ -236,7 +292,7 @@ export const EditInvoiceModal: React.FC<EditInvoiceModalProps> = ({
                     setCustomElecMoney(true);
                     setElecBaht(parseFloat(e.target.value) || 0);
                   }}
-                  className="w-full border border-amber-200 bg-white rounded-lg px-2.5 py-1.5 mono-num font-bold text-amber-900"
+                  className="w-full border border-amber-200 bg-white rounded-lg px-2 py-1.5 mono-num font-bold text-amber-900"
                 />
               </div>
             </div>

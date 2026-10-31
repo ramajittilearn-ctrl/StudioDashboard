@@ -579,9 +579,11 @@ export async function updateInvoice(payload: any): Promise<AppState> {
     parkingFeeSatang,
     waterSatang,
     waterUnits,
+    prevWater,
     currWater,
     elecSatang,
     elecUnits,
+    prevElec,
     currElec,
     arrearsSatang,
     lateFeeSatang,
@@ -595,9 +597,11 @@ export async function updateInvoice(payload: any): Promise<AppState> {
     if (parkingFeeSatang !== undefined) inv.parkingFeeSatang = Number(parkingFeeSatang);
     if (waterSatang !== undefined) inv.waterSatang = Number(waterSatang);
     if (waterUnits !== undefined) inv.waterUnits = Number(waterUnits);
+    if (prevWater !== undefined) inv.prevWater = Number(prevWater);
     if (currWater !== undefined) inv.currWater = Number(currWater);
     if (elecSatang !== undefined) inv.elecSatang = Number(elecSatang);
     if (elecUnits !== undefined) inv.elecUnits = Number(elecUnits);
+    if (prevElec !== undefined) inv.prevElec = Number(prevElec);
     if (currElec !== undefined) inv.currElec = Number(currElec);
     if (arrearsSatang !== undefined) inv.arrearsSatang = Number(arrearsSatang);
     if (lateFeeSatang !== undefined) inv.lateFeeSatang = Number(lateFeeSatang);
