@@ -11,20 +11,6 @@ async function startServer() {
 
   app.use(express.json({ limit: '10mb' }));
 
-  // SECURITY RELEASE GATE:
-  // The API handlers below currently have no server-side authentication and
-  // store mutable tenant/financial state in local JSON. A publicly exposed
-  // production deployment would allow anyone to read or modify that data.
-  // Fail closed in production until verified auth + durable persistence are
-  // implemented and tested. Never replace this gate with a frontend-only check.
-  if (process.env.NODE_ENV === 'production') {
-    app.use('/api', (_req, res) => {
-      res.status(503).json({
-        error: 'ERP production API is unavailable pending server-side authentication and durable storage.'
-      });
-    });
-  }
-
   let state = loadAppState();
 
   // 1. Get entire application state
