@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { AppState, PropertySettings } from '../types';
 import { formatBaht, fromSatang, toSatang } from '../lib/finance';
-import { Settings, Plus, Trash2, Download, Upload, RotateCcw, MessageSquare, ShieldCheck } from 'lucide-react';
+import { Settings, Plus, Trash2, Download, Upload, RotateCcw, MessageSquare } from 'lucide-react';
+import { downloadStateJson, testLineConnection } from '../api/client';
 
 interface SettingsExpensesProps {
   state: AppState;
@@ -322,12 +323,7 @@ export const SettingsExpenses: React.FC<SettingsExpensesProps> = ({
                     return;
                   }
                   try {
-                    const res = await fetch('/api/line/test-connection', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ token: lineToken.trim() })
-                    });
-                    const data = await res.json();
+                    const data = await testLineConnection(lineToken.trim());
                     if (data.success) {
                       alert(`✅ เชื่อมต่อ LINE OA สำเร็จ!\nชื่อบอท: ${data.botInfo?.displayName || 'LINE Bot'}\nBasic ID: ${data.botInfo?.basicId || '-'}`);
                     } else {
@@ -380,14 +376,14 @@ export const SettingsExpenses: React.FC<SettingsExpensesProps> = ({
             </button>
 
             <div className="flex items-center gap-2">
-              <a
-                href="/api/backup/download"
-                download={`taky_erp_backup_${state.simulatedDate}.json`}
+              <button
+                type="button"
+                onClick={() => downloadStateJson(state)}
                 className="px-3 py-2 rounded-lg bg-slate-800 text-white font-medium hover:bg-slate-700 transition flex items-center gap-1"
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>สำรองข้อมูล (.json)</span>
-              </a>
+              </button>
 
               <label className="px-3 py-2 rounded-lg bg-slate-100 text-slate-700 border border-slate-300 font-medium hover:bg-slate-200 transition cursor-pointer flex items-center gap-1">
                 <Upload className="w-3.5 h-3.5" />

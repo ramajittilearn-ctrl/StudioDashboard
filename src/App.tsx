@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { AppState, Room } from './types';
 import {
   fetchAppState,
+  setClientCachedState,
   updateSimulatedDate,
   updateSettings,
   batchSetupRooms,
@@ -94,6 +95,7 @@ export default function App() {
         let remoteState = await loadStateFromFirestore();
 
         if (remoteState && Array.isArray(remoteState.rooms) && remoteState.rooms.length === 15) {
+          setClientCachedState(remoteState);
           setState(remoteState);
           setIsCloudSynced(true);
           if (remoteState.invoices && remoteState.invoices.length > 0) {
@@ -101,6 +103,7 @@ export default function App() {
           }
         } else {
           const serverState = await fetchAppState();
+          setClientCachedState(serverState);
           setState(serverState);
           if (serverState.invoices && serverState.invoices.length > 0) {
             setSelectedInvoiceId(serverState.invoices[0].id);
@@ -111,6 +114,7 @@ export default function App() {
       } catch (err) {
         console.warn('Could not read from Firestore, falling back to local server:', err);
         const serverState = await fetchAppState();
+        setClientCachedState(serverState);
         setState(serverState);
         if (serverState.invoices && serverState.invoices.length > 0) {
           setSelectedInvoiceId(serverState.invoices[0].id);
@@ -122,6 +126,7 @@ export default function App() {
       // 2. Subscribe to real-time changes from Firestore
       const unsubscribeFirestore = subscribeToFirestoreState((cloudState) => {
         if (!isLocalUpdate.current) {
+          setClientCachedState(cloudState);
           setState(cloudState);
           setIsCloudSynced(true);
         }

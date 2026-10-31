@@ -3,7 +3,7 @@ import { BackupSnapshot, PropertySettings } from '../../types';
 import { User } from 'firebase/auth';
 import { ADMIN_EMAIL, isUserAdmin } from '../../lib/firebase';
 import { X, Database, RotateCcw, Download, Upload, ShieldAlert, CheckCircle2, Clock, Calendar, Sparkles, AlertTriangle } from 'lucide-react';
-import { createBackup, recallBackup, resetToDayOne, resetToDemo, restoreBackup } from '../../api/client';
+import { createBackup, downloadStateJson, fetchAppState, recallBackup, resetToDayOne, resetToDemo, restoreBackup } from '../../api/client';
 
 interface BackupRecallModalProps {
   isOpen: boolean;
@@ -256,14 +256,17 @@ export const BackupRecallModal: React.FC<BackupRecallModalProps> = ({
                 >
                   โหลด Demo
                 </button>
-                <a
-                  href="/api/backup/download"
-                  download
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const current = await fetchAppState();
+                    downloadStateJson(current);
+                  }}
                   className="flex-1 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium text-xs border border-slate-700 transition text-center flex items-center justify-center gap-1"
                 >
                   <Download className="w-3.5 h-3.5" />
                   <span>โหลด JSON</span>
-                </a>
+                </button>
               </div>
             </div>
           </div>
