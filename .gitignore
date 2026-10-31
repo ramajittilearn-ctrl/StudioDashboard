@@ -1,0 +1,31 @@
+# Dependencies and build output
+node_modules/
+dist/
+build/
+.next/
+coverage/
+*.log
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+service-account*.json
+firebase-adminsdk*.json
+credentials.json
+
+# Runtime files and tenant data (never commit personal/payment data)
+data/dormitory_state.json
+data/*snapshot*.json
+data/*backup*.json
+backups/
+uploads/
+private/
+
+# Editor/system files
+.DS_Store
+.idea/
+.vscode/
