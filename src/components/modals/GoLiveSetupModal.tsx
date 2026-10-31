@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppState, PackageTier, ParkingType, Room, RoomStatus } from '../../types';
 import { fromSatang, toSatang } from '../../lib/finance';
 import { X, Check, Trash2, Rocket } from 'lucide-react';
@@ -16,9 +16,15 @@ export const GoLiveSetupModal: React.FC<GoLiveSetupModalProps> = ({
   onClose,
   onSubmit
 }) => {
-  if (!isOpen) return null;
-
   const [rooms, setRooms] = useState<Room[]>(() => JSON.parse(JSON.stringify(state.rooms)));
+
+  useEffect(() => {
+    if (isOpen) {
+      setRooms(JSON.parse(JSON.stringify(state.rooms)));
+    }
+  }, [isOpen, state.rooms]);
+
+  if (!isOpen) return null;
 
   const handleFieldChange = (roomNumber: string, field: keyof Room, val: any) => {
     setRooms(prev => prev.map(rm => {

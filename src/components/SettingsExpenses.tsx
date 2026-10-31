@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppState, PropertySettings } from '../types';
 import { formatBaht, fromSatang, toSatang } from '../lib/finance';
 import { Settings, Plus, Trash2, Download, Upload, RotateCcw, MessageSquare } from 'lucide-react';
@@ -41,6 +41,25 @@ export const SettingsExpenses: React.FC<SettingsExpensesProps> = ({
   const [lineToken, setLineToken] = useState<string>(settings.lineChannelAccessToken || '');
   const [lineDestId, setLineDestId] = useState<string>(settings.lineDestinationId || '');
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
+
+  useEffect(() => {
+    setElecRate(fromSatang(settings.electricityRateSatang));
+    setWaterRate(fromSatang(settings.waterRateSatang));
+    setCarParkRate(fromSatang(settings.carParkingRateSatang));
+    setBikeParkRate(fromSatang(settings.bikeParkingRateSatang));
+    setTierStd(fromSatang(settings.tierStandardSatang));
+    setTierSilver(fromSatang(settings.tierSilverSatang));
+    setTierGold(fromSatang(settings.tierGoldSatang));
+    setBillingDay(settings.billingDay);
+    setDueDay(settings.dueDayNextMonth);
+    setLateFee(fromSatang(settings.dailyLateFeeSatang));
+    setPromptPayId(settings.promptPayId);
+    setBankName(settings.bankName);
+    setBankAccount(settings.bankAccount);
+    setBankOwner(settings.bankOwner);
+    setLineToken(settings.lineChannelAccessToken || '');
+    setLineDestId(settings.lineDestinationId || '');
+  }, [settings]);
 
   // New Expense Form
   const [expTitle, setExpTitle] = useState<string>('');

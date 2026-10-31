@@ -33,6 +33,7 @@ import {
   isUserAdmin
 } from './lib/firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
+import { getLatestRoomInvoice } from './lib/finance';
 import { Header } from './components/Header';
 import { DashboardView } from './components/DashboardView';
 import { RoomLiveBoard } from './components/RoomLiveBoard';
@@ -489,7 +490,7 @@ export default function App() {
             onNavigateTab={setActiveTab}
             onOpenPaymentModal={(invId) => setPaymentInvoiceId(invId)}
             onViewInvoice={(rNum) => {
-              const inv = state.invoices.find(i => i.roomNumber === rNum && i.status !== 'ROLLED_OVER');
+              const inv = getLatestRoomInvoice(state.invoices, rNum);
               if (inv) setSelectedInvoiceId(inv.id);
               setActiveTab('invoices');
             }}
@@ -509,12 +510,12 @@ export default function App() {
             onCancelReserve={handleCancelReserve}
             onMarkMaintenanceDone={handleMaintenanceDone}
             onOpenPayment={(rNum) => {
-              const inv = state.invoices.find(i => i.roomNumber === rNum && i.status !== 'ROLLED_OVER');
+              const inv = getLatestRoomInvoice(state.invoices, rNum);
               if (inv) setPaymentInvoiceId(inv.id);
             }}
             onOpenMoveOut={(rNum) => setMoveOutRoom(state.rooms.find(r => r.roomNumber === rNum) || null)}
             onViewLineBill={(rNum) => {
-              const inv = state.invoices.find(i => i.roomNumber === rNum && i.status !== 'ROLLED_OVER');
+              const inv = getLatestRoomInvoice(state.invoices, rNum);
               if (inv) setSelectedInvoiceId(inv.id);
               setActiveTab('invoices');
             }}
@@ -550,7 +551,7 @@ export default function App() {
             onOpenPaymentModal={(invId) => setPaymentInvoiceId(invId)}
             onOpenEditInvoice={(invId) => setEditingInvoiceId(invId)}
             onViewInvoice={(rNum) => {
-              const inv = state.invoices.find(i => i.roomNumber === rNum && i.status !== 'ROLLED_OVER');
+              const inv = getLatestRoomInvoice(state.invoices, rNum);
               if (inv) setSelectedInvoiceId(inv.id);
               setActiveTab('invoices');
             }}

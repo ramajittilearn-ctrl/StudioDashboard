@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppState, Room } from '../../types';
-import { formatBaht, fromSatang, toSatang } from '../../lib/finance';
-import { X, LogOut, Check } from 'lucide-react';
+import { calcMeterUnits, formatBaht, toSatang } from '../../lib/finance';
+import { X, LogOut } from 'lucide-react';
 
 interface MoveOutModalProps {
   room: Room | null;
@@ -18,24 +18,40 @@ export const MoveOutModal: React.FC<MoveOutModalProps> = ({
   onClose,
   onSubmit
 }) => {
-  if (!isOpen || !room) return null;
-
   const { settings } = state;
-  const activeInvoice = state.invoices.find(i => i.roomNumber === room.roomNumber && i.status !== 'ROLLED_OVER' && i.balanceDueSatang > 0);
 
-  const [currWater, setCurrWater] = useState<number>(room.currWater + 3);
-  const [currElec, setCurrElec] = useState<number>(room.currElec + 45);
+  const [currWater, setCurrWater] = useState<number>(0);
+  const [waterRoll, setWaterRoll] = useState<boolean>(false);
+  const [currElec, setCurrElec] = useState<number>(0);
+  const [elecRoll, setElecRoll] = useState<boolean>(false);
   const [cleaningFeeBaht, setCleaningFeeBaht] = useState<number>(300);
   const [damageFeeBaht, setDamageFeeBaht] = useState<number>(0);
 
-  const wUnits = Math.max(0, currWater - room.currWater);
-  const eUnits = Math.max(0, currElec - room.currElec);
+  useEffect(() => {
+    if (!room) return;
+    setCurrWater(room.currWater);
+    setWaterRoll(false);
+    setCurrElec(room.currElec);
+    setElecRoll(false);
+    setCleaningFeeBaht(300);
+    setDamageFeeBaht(0);
+  }, [room, isOpen]);
+
+  if (!isOpen || !room) return null;
+
+  const unpaidInvoices = state.invoices.filter(
+    i => i.roomNumber === room.roomNumber && i.status !== 'ROLLED_OVER' && i.balanceDueSatang > 0
+  );
+  const totalInvoiceArrears = unpaidInvoices.reduce((sum, inv) => sum + inv.balanceDueSatang, 0);
+
+  const wUnits = Math.max(0, calcMeterUnits(room.currWater, currWater, waterRoll));
+  const eUnits = Math.max(0, calcMeterUnits(room.currElec, currElec, elecRoll));
   const finalWaterSatang = wUnits * settings.waterRateSatang;
   const finalElectricSatang = eUnits * settings.electricityRateSatang;
   const cleaningSatang = toSatang(cleaningFeeBaht);
   const damageSatang = toSatang(damageFeeBaht);
-  const unpaidArrearsSatang = activeInvoice ? activeInvoice.balanceDueSatang : (room.arrearsSatang || 0);
-  const depositHeldSatang = room.depositSatang || settings.tierGoldSatang;
+  const unpaidArrearsSatang = unpaidInvoices.length > 0 ? totalInvoiceArrears : (room.arrearsSatang || 0);
+  const depositHeldSatang = room.depositSatang || 0;
 
   const totalDeductions = finalWaterSatang + finalElectricSatang + cleaningSatang + damageSatang + unpaidArrearsSatang;
   const netRefundSatang = depositHeldSatang - totalDeductions;
@@ -46,6 +62,8 @@ export const MoveOutModal: React.FC<MoveOutModalProps> = ({
       roomNumber: room.roomNumber,
       currWater,
       currElec,
+      waterRoll,
+      elecRoll,
       cleaningFeeSatang: cleaningSatang,
       damageFeeSatang: damageSatang
     });
@@ -70,9 +88,20 @@ export const MoveOutModal: React.FC<MoveOutModalProps> = ({
           {/* Meter Readings */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">
-                มิเตอร์น้ำครั้งก่อน ({room.currWater}) → วันย้ายออก
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block font-semibold text-slate-700">
+                  มิเตอร์น้ำ ({room.currWater} → ย้ายออก)
+                </label>
+                <label className="flex items-center gap-1 text-[10px] text-slate-600 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={waterRoll}
+                    onChange={(e) => setWaterRoll(e.target.checked)}
+                    className="accent-sky-600"
+                  />
+                  <span>วนรอบ</span>
+                </label>
+              </div>
               <input
                 type="number"
                 value={currWater}
@@ -83,9 +112,20 @@ export const MoveOutModal: React.FC<MoveOutModalProps> = ({
               <span className="text-[10px] text-slate-500">ใช้ {wUnits} หน่วย = ฿{formatBaht(finalWaterSatang)}</span>
             </div>
             <div>
-              <label className="block font-semibold text-slate-700 mb-1">
-                มิเตอร์ไฟครั้งก่อน ({room.currElec}) → วันย้ายออก
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block font-semibold text-slate-700">
+                  มิเตอร์ไฟ ({room.currElec} → ย้ายออก)
+                </label>
+                <label className="flex items-center gap-1 text-[10px] text-slate-600 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={elecRoll}
+                    onChange={(e) => setElecRoll(e.target.checked)}
+                    className="accent-amber-600"
+                  />
+                  <span>วนรอบ</span>
+                </label>
+              </div>
               <input
                 type="number"
                 value={currElec}

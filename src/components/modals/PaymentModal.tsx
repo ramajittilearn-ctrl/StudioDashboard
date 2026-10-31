@@ -18,19 +18,22 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   onClose,
   onSubmit
 }) => {
-  if (!isOpen || !invoice) return null;
-
   const { settings, simulatedDate } = state;
-  const lateSatang = calcLateFeeSatang(invoice, simulatedDate, settings);
-  const totalRemainingSatang = invoice.balanceDueSatang + lateSatang;
+  const lateSatang = invoice ? calcLateFeeSatang(invoice, simulatedDate, settings) : 0;
+  const totalRemainingSatang = invoice ? invoice.balanceDueSatang + lateSatang : 0;
 
-  const [amountBaht, setAmountBaht] = useState<number>(fromSatang(totalRemainingSatang));
+  const [amountBaht, setAmountBaht] = useState<number>(0);
   const [method, setMethod] = useState<PaymentMethod>('PromptPay QR');
   const [slipNote, setSlipNote] = useState<string>('สลิปโอนเงิน PromptPay (ตรวจสอบแล้ว)');
 
   useEffect(() => {
+    if (!invoice) return;
     setAmountBaht(fromSatang(totalRemainingSatang));
-  }, [invoice, simulatedDate]);
+    setMethod('PromptPay QR');
+    setSlipNote('สลิปโอนเงิน PromptPay (ตรวจสอบแล้ว)');
+  }, [invoice, isOpen, simulatedDate, totalRemainingSatang]);
+
+  if (!isOpen || !invoice) return null;
 
   const handlePreset = (fraction: number) => {
     setAmountBaht(fromSatang(Math.round(totalRemainingSatang * fraction)));

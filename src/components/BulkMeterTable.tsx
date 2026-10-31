@@ -21,6 +21,7 @@ interface LocalReading {
 export const BulkMeterTable: React.FC<BulkMeterTableProps> = ({ state, onCommitInvoices }) => {
   const { rooms, settings, invoices, simulatedDate } = state;
   const occupiedRooms = rooms.filter(r => r.status === 'OCCUPIED');
+  const period = simulatedDate.substring(0, 7);
 
   const [readings, setReadings] = useState<Record<string, LocalReading>>({});
   const [allowEditPrev, setAllowEditPrev] = useState<boolean>(false);
@@ -28,18 +29,25 @@ export const BulkMeterTable: React.FC<BulkMeterTableProps> = ({ state, onCommitI
   useEffect(() => {
     const map: Record<string, LocalReading> = {};
     occupiedRooms.forEach(rm => {
+      const currentPeriodInv = invoices.find(
+        i =>
+          i.roomNumber === rm.roomNumber &&
+          i.billingPeriod === period &&
+          i.status !== 'ROLLED_OVER' &&
+          !i.id.endsWith('-PRORATE')
+      );
       map[rm.roomNumber] = {
         roomNumber: rm.roomNumber,
-        prevWater: rm.prevWater,
-        currWater: rm.currWater,
-        waterRoll: rm.waterRoll,
-        prevElec: rm.prevElec,
-        currElec: rm.currElec,
-        elecRoll: rm.elecRoll
+        prevWater: currentPeriodInv ? currentPeriodInv.prevWater : rm.prevWater,
+        currWater: currentPeriodInv ? currentPeriodInv.currWater : rm.currWater,
+        waterRoll: currentPeriodInv ? currentPeriodInv.waterRoll : rm.waterRoll,
+        prevElec: currentPeriodInv ? currentPeriodInv.prevElec : rm.prevElec,
+        currElec: currentPeriodInv ? currentPeriodInv.currElec : rm.currElec,
+        elecRoll: currentPeriodInv ? currentPeriodInv.elecRoll : rm.elecRoll
       };
     });
     setReadings(map);
-  }, [rooms]);
+  }, [rooms, invoices, simulatedDate]);
 
   const handleUpdate = (roomNumber: string, field: keyof LocalReading, val: any) => {
     setReadings(prev => ({
@@ -73,8 +81,8 @@ export const BulkMeterTable: React.FC<BulkMeterTableProps> = ({ state, onCommitI
     for (const rm of occupiedRooms) {
       const rd = readings[rm.roomNumber];
       if (!rd) continue;
-      const effectivePrevW = allowEditPrev ? rd.prevWater : rm.prevWater;
-      const effectivePrevE = allowEditPrev ? rd.prevElec : rm.prevElec;
+      const effectivePrevW = rd.prevWater;
+      const effectivePrevE = rd.prevElec;
       const wUnits = calcMeterUnits(effectivePrevW, rd.currWater, rd.waterRoll);
       const eUnits = calcMeterUnits(effectivePrevE, rd.currElec, rd.elecRoll);
       if (wUnits < 0 || eUnits < 0) {
@@ -169,18 +177,26 @@ export const BulkMeterTable: React.FC<BulkMeterTableProps> = ({ state, onCommitI
           </thead>
           <tbody className="divide-y divide-slate-200">
             {occupiedRooms.map(rm => {
+              const currentPeriodInv = invoices.find(
+                i =>
+                  i.roomNumber === rm.roomNumber &&
+                  i.billingPeriod === period &&
+                  i.status !== 'ROLLED_OVER' &&
+                  !i.id.endsWith('-PRORATE')
+              );
+
               const rd = readings[rm.roomNumber] || {
                 roomNumber: rm.roomNumber,
-                prevWater: rm.prevWater,
-                currWater: rm.currWater,
-                waterRoll: rm.waterRoll,
-                prevElec: rm.prevElec,
-                currElec: rm.currElec,
-                elecRoll: rm.elecRoll
+                prevWater: currentPeriodInv ? currentPeriodInv.prevWater : rm.prevWater,
+                currWater: currentPeriodInv ? currentPeriodInv.currWater : rm.currWater,
+                waterRoll: currentPeriodInv ? currentPeriodInv.waterRoll : rm.waterRoll,
+                prevElec: currentPeriodInv ? currentPeriodInv.prevElec : rm.prevElec,
+                currElec: currentPeriodInv ? currentPeriodInv.currElec : rm.currElec,
+                elecRoll: currentPeriodInv ? currentPeriodInv.elecRoll : rm.elecRoll
               };
 
-              const effectivePrevW = allowEditPrev ? rd.prevWater : rm.prevWater;
-              const effectivePrevE = allowEditPrev ? rd.prevElec : rm.prevElec;
+              const effectivePrevW = rd.prevWater;
+              const effectivePrevE = rd.prevElec;
               const wUnits = calcMeterUnits(effectivePrevW, rd.currWater, rd.waterRoll);
               const eUnits = calcMeterUnits(effectivePrevE, rd.currElec, rd.elecRoll);
               const wInvalid = wUnits < 0;
@@ -190,9 +206,30 @@ export const BulkMeterTable: React.FC<BulkMeterTableProps> = ({ state, onCommitI
               const eSatang = Math.max(0, eUnits) * settings.electricityRateSatang;
               const parkingSatang = rm.parkingFeeSatang || 0;
 
-              const inv = invoices.find(i => i.roomNumber === rm.roomNumber && i.status !== 'ROLLED_OVER');
-              const lateSatang = inv ? calcLateFeeSatang(inv, simulatedDate, settings) : 0;
-              const arrearsAndLate = (rm.arrearsSatang || 0) + lateSatang;
+              const priorUnpaidInvoices = invoices.filter(
+                oldInv =>
+                  oldInv.roomNumber === rm.roomNumber &&
+                  oldInv.billingPeriod !== period &&
+                  oldInv.balanceDueSatang > 0 &&
+                  oldInv.status !== 'ROLLED_OVER'
+              );
+              let arrearsAndLate = 0;
+              if (priorUnpaidInvoices.length > 0) {
+                arrearsAndLate = priorUnpaidInvoices.reduce(
+                  (sum, oldInv) => sum + oldInv.balanceDueSatang + calcLateFeeSatang(oldInv, simulatedDate, settings),
+                  0
+                );
+                if (currentPeriodInv) {
+                  arrearsAndLate += (currentPeriodInv.arrearsSatang || 0) + calcLateFeeSatang(currentPeriodInv, simulatedDate, settings);
+                }
+              } else if (currentPeriodInv) {
+                arrearsAndLate = (currentPeriodInv.arrearsSatang || 0) + calcLateFeeSatang(currentPeriodInv, simulatedDate, settings);
+              } else {
+                const hasAnyPriorInvoice = invoices.some(
+                  i => i.roomNumber === rm.roomNumber && !i.id.endsWith('-PRORATE')
+                );
+                arrearsAndLate = hasAnyPriorInvoice ? 0 : (rm.arrearsSatang || 0);
+              }
               const rowTotal = rm.rentSatang + wSatang + eSatang + parkingSatang + arrearsAndLate;
 
               sumRent += rm.rentSatang;

@@ -76,8 +76,20 @@ export function calcNextDueDate(issueDateStr: string, dueDay: number = 5): strin
 }
 
 /**
- * Late fee calculation after the 5th of following month
- * Rule: daily fee * days past due date (only if balance due > 0 and status is not PAID)
+ * Parse YYYY-MM-DD into UTC midnight timestamp (ms)
+ */
+function parseDateUtcMs(dateStr: string): number {
+  const parts = (dateStr || '').split('-');
+  const y = parseInt(parts[0], 10) || 2026;
+  const m = (parseInt(parts[1], 10) || 1) - 1;
+  const d = parseInt(parts[2], 10) || 1;
+  return Date.UTC(y, m, d);
+}
+
+/**
+ * Late fee calculation after the due date (e.g. 5th of following month)
+ * Rule: daily fee * calendar days past due date (only if balance due > 0 and status is not PAID)
+ * Subtracts any lateFeeSatang already baked into the invoice so partial payments never double-count.
  */
 export function calcLateFeeSatang(
   invoice: Invoice,
@@ -86,12 +98,33 @@ export function calcLateFeeSatang(
 ): number {
   if (!invoice || invoice.status === 'PAID' || invoice.status === 'ROLLED_OVER') return 0;
   if ((invoice.balanceDueSatang || 0) <= 0) return 0;
+  if (!invoice.dueDate || !currentDateStr) return 0;
 
-  const due = new Date(invoice.dueDate + 'T23:59:59');
-  const curr = new Date(currentDateStr + 'T12:00:00');
-  if (curr <= due) return 0;
+  const dueMs = parseDateUtcMs(invoice.dueDate);
+  const currMs = parseDateUtcMs(currentDateStr);
+  if (currMs <= dueMs) return 0;
 
-  const diffMs = curr.getTime() - due.getTime();
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  return Math.max(0, diffDays) * (settings.dailyLateFeeSatang || 5000);
+  const diffDays = Math.round((currMs - dueMs) / (1000 * 60 * 60 * 24));
+  const totalAccruedSatang = Math.max(0, diffDays) * (settings.dailyLateFeeSatang || 5000);
+  const alreadyRecordedSatang = invoice.lateFeeSatang || 0;
+  return Math.max(0, totalAccruedSatang - alreadyRecordedSatang);
+}
+
+/**
+ * Get the latest active (non-ROLLED_OVER) invoice for a room.
+ * Prioritizes unpaid invoices, and picks the latest billingPeriod (and latest item in array).
+ */
+export function getLatestRoomInvoice(invoices: Invoice[], roomNumber: string): Invoice | undefined {
+  const active = (invoices || []).filter(
+    i => i.roomNumber === roomNumber && i.status !== 'ROLLED_OVER'
+  );
+  if (active.length === 0) return undefined;
+  const unpaid = active.filter(i => i.balanceDueSatang > 0);
+  const pool = unpaid.length > 0 ? unpaid : active;
+  return pool.reduce((latest, curr) => {
+    if ((curr.billingPeriod || '') >= (latest.billingPeriod || '')) {
+      return curr;
+    }
+    return latest;
+  }, pool[0]);
 }

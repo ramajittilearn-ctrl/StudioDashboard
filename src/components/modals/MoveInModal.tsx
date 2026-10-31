@@ -18,23 +18,40 @@ export const MoveInModal: React.FC<MoveInModalProps> = ({
   onClose,
   onSubmit
 }) => {
-  if (!isOpen || !room) return null;
-
   const { settings, simulatedDate } = state;
 
-  const [tenantName, setTenantName] = useState<string>(room.status === 'RESERVED' ? room.tenantName.replace(' (จองแล้ว)', '') : '');
-  const [phone, setPhone] = useState<string>(room.phone || '');
-  const [lineId, setLineId] = useState<string>(room.lineId || '');
-  const [tier, setTier] = useState<PackageTier>(room.tier || 'GOLD');
-  const [rentBaht, setRentBaht] = useState<number>(fromSatang(room.rentSatang || settings.tierGoldSatang));
+  const [tenantName, setTenantName] = useState<string>('');
+  const [phone, setPhone] = useState<string>('');
+  const [lineId, setLineId] = useState<string>('');
+  const [tier, setTier] = useState<PackageTier>('GOLD');
+  const [rentBaht, setRentBaht] = useState<number>(fromSatang(settings.tierGoldSatang));
   const [depositMonths, setDepositMonths] = useState<number>(settings.defaultDepositMonths || 1);
   const [startDate, setStartDate] = useState<string>(simulatedDate);
-  const [parkingType, setParkingType] = useState<ParkingType>(room.parkingType || 'NONE');
-  const [parkingFeeBaht, setParkingFeeBaht] = useState<number>(fromSatang(room.parkingFeeSatang || 0));
-  const [bookingCreditBaht, setBookingCreditBaht] = useState<number>(room.status === 'RESERVED' ? fromSatang(room.bookingDepositSatang || 0) : 0);
+  const [parkingType, setParkingType] = useState<ParkingType>('NONE');
+  const [parkingFeeBaht, setParkingFeeBaht] = useState<number>(0);
+  const [bookingCreditBaht, setBookingCreditBaht] = useState<number>(0);
   const [useProrate, setUseProrate] = useState<boolean>(true);
-  const [initWater, setInitWater] = useState<number>(room.currWater || 0);
-  const [initElec, setInitElec] = useState<number>(room.currElec || 0);
+  const [initWater, setInitWater] = useState<number>(0);
+  const [initElec, setInitElec] = useState<number>(0);
+
+  useEffect(() => {
+    if (!room) return;
+    setTenantName(room.status === 'RESERVED' ? room.tenantName.replace(' (จองแล้ว)', '') : '');
+    setPhone(room.phone || '');
+    setLineId(room.lineId || '');
+    setTier(room.tier || 'GOLD');
+    setRentBaht(fromSatang(room.rentSatang || settings.tierGoldSatang));
+    setDepositMonths(settings.defaultDepositMonths || 1);
+    setStartDate(simulatedDate);
+    setParkingType(room.parkingType || 'NONE');
+    setParkingFeeBaht(fromSatang(room.parkingFeeSatang || 0));
+    setBookingCreditBaht(room.status === 'RESERVED' ? fromSatang(room.bookingDepositSatang || 0) : 0);
+    setUseProrate(true);
+    setInitWater(room.currWater || 0);
+    setInitElec(room.currElec || 0);
+  }, [room, isOpen, simulatedDate, settings]);
+
+  if (!isOpen || !room) return null;
 
   // Update rent when tier changes
   const handleTierChange = (newTier: PackageTier) => {

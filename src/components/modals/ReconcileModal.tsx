@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { FormSubmission, Invoice, Room } from '../../types';
-import { formatBaht } from '../../lib/finance';
+import { formatBaht, getLatestRoomInvoice } from '../../lib/finance';
 import { X, CheckCircle2, XCircle, Upload, FileText, ExternalLink, Image as ImageIcon, ZoomIn, AlertCircle, Copy, Check } from 'lucide-react';
 import { approveReconcile, manualUploadSlip, rejectReconcile } from '../../api/client';
 
@@ -41,7 +41,8 @@ export const ReconcileModal: React.FC<ReconcileModalProps> = ({
   const historySubmissions = submissions.filter(s => s.status !== 'PENDING');
   const currentSub = submissions.find(s => s.id === selectedSubId) || pendingSubmissions[0];
 
-  const targetInvoice = currentSub ? invoices.find(i => i.roomNumber === currentSub.roomNumber && i.balanceDueSatang > 0) : null;
+  const latestInv = currentSub ? getLatestRoomInvoice(invoices, currentSub.roomNumber) : undefined;
+  const targetInvoice = latestInv && latestInv.balanceDueSatang > 0 ? latestInv : null;
   const targetRoom = currentSub ? rooms.find(r => r.roomNumber === currentSub.roomNumber) : null;
 
   const handleApprove = async () => {

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppState, PackageTier, ParkingType, Room } from '../../types';
 import { formatBaht, fromSatang, toSatang } from '../../lib/finance';
 import { X, BookmarkCheck } from 'lucide-react';
@@ -18,17 +18,28 @@ export const ReserveModal: React.FC<ReserveModalProps> = ({
   onClose,
   onSubmit
 }) => {
-  if (!isOpen || !room) return null;
-
   const { settings, simulatedDate } = state;
 
   const [tenantName, setTenantName] = useState<string>('');
   const [phone, setPhone] = useState<string>('');
   const [lineId, setLineId] = useState<string>('');
   const [expectedDate, setExpectedDate] = useState<string>(simulatedDate);
-  const [tier, setTier] = useState<PackageTier>(room.tier || 'SILVER');
+  const [tier, setTier] = useState<PackageTier>('SILVER');
   const [parkingType, setParkingType] = useState<ParkingType>('NONE');
   const [depositBaht, setDepositBaht] = useState<number>(1000);
+
+  useEffect(() => {
+    if (!room) return;
+    setTenantName('');
+    setPhone('');
+    setLineId('');
+    setExpectedDate(simulatedDate);
+    setTier(room.tier || 'SILVER');
+    setParkingType('NONE');
+    setDepositBaht(1000);
+  }, [room, isOpen, simulatedDate]);
+
+  if (!isOpen || !room) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

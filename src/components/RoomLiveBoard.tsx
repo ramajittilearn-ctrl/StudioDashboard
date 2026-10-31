@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AppState, Room } from '../types';
-import { calcLateFeeSatang, formatBaht } from '../lib/finance';
+import { calcLateFeeSatang, formatBaht, getLatestRoomInvoice } from '../lib/finance';
 import { Search, Plus, Car, Bike, ShieldCheck, Wrench, Smartphone, DollarSign, LogOut } from 'lucide-react';
 
 interface RoomLiveBoardProps {
@@ -32,7 +32,7 @@ export const RoomLiveBoard: React.FC<RoomLiveBoardProps> = ({
   const [search, setSearch] = useState<string>('');
 
   const getRoomInvoice = (roomNumber: string) => {
-    return state.invoices.find(inv => inv.roomNumber === roomNumber && inv.status !== 'ROLLED_OVER');
+    return getLatestRoomInvoice(state.invoices, roomNumber);
   };
 
   const floors = [1, 2, 3];

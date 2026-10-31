@@ -7,7 +7,7 @@ import {
   Room,
   TenantRegistration
 } from '../types';
-import { calcLateFeeSatang, calcMeterUnits, calcNextDueDate, calcProratedRentSatang, formatBaht } from '../lib/finance';
+import { calcLateFeeSatang, calcMeterUnits, calcNextDueDate, calcProratedRentSatang, formatBaht, getLatestRoomInvoice } from '../lib/finance';
 import { saveStateToFirestore } from '../lib/firebase';
 
 export function createDayOneState(): AppState {
@@ -351,6 +351,12 @@ export async function submitMoveIn(payload: any): Promise<AppState> {
     const finalRentSatang = Number(rentSatang) || state.settings.tierGoldSatang;
     const depositSatang = finalRentSatang * mult;
 
+    const hasInitWater = initWater !== undefined && initWater !== null && initWater !== '';
+    const hasInitElec = initElec !== undefined && initElec !== null && initElec !== '';
+    const wVal = hasInitWater ? Number(initWater) : (rm.currWater || 0);
+    const eVal = hasInitElec ? Number(initElec) : (rm.currElec || 0);
+    const bookingCreditSatang = Number(payload.bookingCreditSatang) || (rm.status === 'RESERVED' ? (rm.bookingDepositSatang || 0) : 0);
+
     rm.status = 'OCCUPIED';
     rm.tenantName = (tenantName || '').trim();
     rm.phone = (phone || '').trim();
@@ -362,19 +368,24 @@ export async function submitMoveIn(payload: any): Promise<AppState> {
     rm.parkingType = parkingType || 'NONE';
     rm.parkingFeeSatang = Number(parkingFeeSatang) || 0;
     rm.bookingDepositSatang = 0;
-    rm.prevWater = Number(initWater) || 0;
-    rm.currWater = Number(initWater) || 0;
-    rm.prevElec = Number(initElec) || 0;
-    rm.currElec = Number(initElec) || 0;
+    rm.prevWater = wVal;
+    rm.currWater = wVal;
+    rm.prevElec = eVal;
+    rm.currElec = eVal;
     rm.arrearsSatang = 0;
 
-    // B8: If tenant moved in and prorated rent is chosen, issue initial move-in invoice
-    if (payload.useProrate && payload.startDate) {
-      const pro = calcProratedRentSatang(finalRentSatang, payload.startDate, state.settings.billingDay);
-      const period = (payload.startDate || state.simulatedDate).substring(0, 7);
-      const nextDue = calcNextDueDate(payload.startDate || state.simulatedDate, state.settings.dueDayNextMonth || 5);
+    // B8 & H4: Issue initial move-in invoice (both prorated and full-month, deducting any booking deposit credit)
+    const moveInDate = payload.startDate || state.simulatedDate;
+    if (moveInDate) {
+      const useProrate = payload.useProrate !== undefined ? Boolean(payload.useProrate) : false;
+      const pro = calcProratedRentSatang(finalRentSatang, moveInDate, state.settings.billingDay);
+      const firstRentSatang = useProrate ? pro.proratedAmountSatang : finalRentSatang;
+      const period = moveInDate.substring(0, 7);
+      const nextDue = calcNextDueDate(moveInDate, state.settings.dueDayNextMonth || 5);
       const parkingFee = Number(parkingFeeSatang) || 0;
-      const totalMoveInSatang = pro.proratedAmountSatang + parkingFee;
+      const subtotalMoveInSatang = firstRentSatang + parkingFee;
+      const discountSatang = Math.min(subtotalMoveInSatang, Math.max(0, bookingCreditSatang));
+      const totalMoveInSatang = Math.max(0, subtotalMoveInSatang - discountSatang);
 
       state.invoices.push({
         id: `INV-${period.replace('-', '')}-${rm.roomNumber}-PRORATE`,
@@ -382,9 +393,9 @@ export async function submitMoveIn(payload: any): Promise<AppState> {
         tenantName: rm.tenantName,
         tier: rm.tier,
         billingPeriod: period,
-        issueDate: payload.startDate || state.simulatedDate,
+        issueDate: moveInDate,
         dueDate: nextDue,
-        rentSatang: pro.proratedAmountSatang,
+        rentSatang: firstRentSatang,
         parkingType: rm.parkingType,
         parkingFeeSatang: parkingFee,
         prevWater: rm.prevWater,
@@ -399,10 +410,12 @@ export async function submitMoveIn(payload: any): Promise<AppState> {
         elecSatang: 0,
         arrearsSatang: 0,
         lateFeeSatang: 0,
+        discountSatang: discountSatang > 0 ? discountSatang : undefined,
+        adjustmentNote: discountSatang > 0 ? 'หักเงินมัดจำจองล่วงหน้า' : undefined,
         totalSatang: totalMoveInSatang,
         paidSatang: 0,
         balanceDueSatang: totalMoveInSatang,
-        status: 'ISSUED',
+        status: totalMoveInSatang === 0 ? 'PAID' : 'ISSUED',
         payments: []
       });
     }
@@ -472,61 +485,103 @@ export async function commitBulkMeters(readings: any[]): Promise<AppState> {
       const rm = state.rooms.find(r => r.roomNumber === rd.roomNumber);
       if (!rm || rm.status !== 'OCCUPIED') return;
 
-      if (rd.prevWater !== undefined && rd.prevWater !== null) {
-        rm.prevWater = Number(rd.prevWater);
-      }
-      if (rd.prevElec !== undefined && rd.prevElec !== null) {
-        rm.prevElec = Number(rd.prevElec);
-      }
-      rm.currWater = rd.currWater !== undefined && rd.currWater !== null ? Number(rd.currWater) : rm.currWater;
-      rm.waterRoll = Boolean(rd.waterRoll);
-      rm.currElec = rd.currElec !== undefined && rd.currElec !== null ? Number(rd.currElec) : rm.currElec;
-      rm.elecRoll = Boolean(rd.elecRoll);
+      const inv = state.invoices.find(
+        i =>
+          i.roomNumber === rm.roomNumber &&
+          i.billingPeriod === period &&
+          i.status !== 'ROLLED_OVER' &&
+          !i.id.endsWith('-PRORATE')
+      );
 
-      const wUnits = calcMeterUnits(rm.prevWater, rm.currWater, rm.waterRoll);
-      const eUnits = calcMeterUnits(rm.prevElec, rm.currElec, rm.elecRoll);
+      // C2: Preserve the period's starting meter reading if re-committing in the same period
+      const prevW =
+        rd.prevWater !== undefined && rd.prevWater !== null && rd.prevWater !== ''
+          ? Number(rd.prevWater)
+          : inv
+          ? inv.prevWater
+          : rm.prevWater;
+      const prevE =
+        rd.prevElec !== undefined && rd.prevElec !== null && rd.prevElec !== ''
+          ? Number(rd.prevElec)
+          : inv
+          ? inv.prevElec
+          : rm.prevElec;
+
+      const currW =
+        rd.currWater !== undefined && rd.currWater !== null && rd.currWater !== ''
+          ? Number(rd.currWater)
+          : rm.currWater;
+      const currE =
+        rd.currElec !== undefined && rd.currElec !== null && rd.currElec !== ''
+          ? Number(rd.currElec)
+          : rm.currElec;
+      const waterRoll = rd.waterRoll !== undefined ? Boolean(rd.waterRoll) : (inv ? inv.waterRoll : rm.waterRoll);
+      const elecRoll = rd.elecRoll !== undefined ? Boolean(rd.elecRoll) : (inv ? inv.elecRoll : rm.elecRoll);
+
+      const wUnits = calcMeterUnits(prevW, currW, waterRoll);
+      const eUnits = calcMeterUnits(prevE, currE, elecRoll);
       const wSatang = Math.max(0, wUnits) * s.waterRateSatang;
       const eSatang = Math.max(0, eUnits) * s.electricityRateSatang;
       const parkingSatang = rm.parkingFeeSatang || 0;
 
-      const inv = state.invoices.find(
-        i => i.roomNumber === rm.roomNumber && i.billingPeriod === period && i.status !== 'ROLLED_OVER'
-      );
-      const totalSatang = rm.rentSatang + wSatang + eSatang + parkingSatang + (rm.arrearsSatang || 0);
-
-      // B3: Mark previous unpaid invoices for this room as ROLLED_OVER to avoid double counting arrears
-      state.invoices.forEach(oldInv => {
-        if (
+      // B3 & H2: Calculate arrears from prior unpaid invoices and mark them ROLLED_OVER
+      const priorUnpaidInvoices = state.invoices.filter(
+        oldInv =>
           oldInv.roomNumber === rm.roomNumber &&
           oldInv.billingPeriod !== period &&
           oldInv.balanceDueSatang > 0 &&
           oldInv.status !== 'ROLLED_OVER'
-        ) {
+      );
+
+      let arrearsToRoll = 0;
+      if (priorUnpaidInvoices.length > 0) {
+        arrearsToRoll = priorUnpaidInvoices.reduce((sum, oldInv) => {
+          const late = calcLateFeeSatang(oldInv, state.simulatedDate, s);
+          return sum + oldInv.balanceDueSatang + late;
+        }, 0);
+        priorUnpaidInvoices.forEach(oldInv => {
           oldInv.status = 'ROLLED_OVER';
+        });
+        if (inv) {
+          arrearsToRoll += inv.arrearsSatang || 0;
         }
-      });
+      } else if (inv) {
+        arrearsToRoll = inv.arrearsSatang || 0;
+      } else {
+        const hasAnyPriorInvoice = state.invoices.some(
+          i => i.roomNumber === rm.roomNumber && !i.id.endsWith('-PRORATE')
+        );
+        arrearsToRoll = hasAnyPriorInvoice ? 0 : (rm.arrearsSatang || 0);
+      }
 
       const nextDueDate = calcNextDueDate(state.simulatedDate, s.dueDayNextMonth || 5);
+      const discountSatang = inv ? (inv.discountSatang || 0) : 0;
+      const lateFeeSatang = inv ? (inv.lateFeeSatang || 0) : 0;
+      const totalSatang = Math.max(
+        0,
+        rm.rentSatang + wSatang + eSatang + parkingSatang + arrearsToRoll + lateFeeSatang - discountSatang
+      );
 
       if (inv) {
         inv.rentSatang = rm.rentSatang;
         inv.parkingType = rm.parkingType;
         inv.parkingFeeSatang = parkingSatang;
         inv.dueDate = nextDueDate;
-        inv.prevWater = rm.prevWater;
-        inv.currWater = rm.currWater;
-        inv.waterRoll = rm.waterRoll;
+        inv.prevWater = prevW;
+        inv.currWater = currW;
+        inv.waterRoll = waterRoll;
         inv.waterUnits = wUnits;
         inv.waterSatang = wSatang;
-        inv.prevElec = rm.prevElec;
-        inv.currElec = rm.currElec;
-        inv.elecRoll = rm.elecRoll;
+        inv.prevElec = prevE;
+        inv.currElec = currE;
+        inv.elecRoll = elecRoll;
         inv.elecUnits = eUnits;
         inv.elecSatang = eSatang;
-        inv.arrearsSatang = rm.arrearsSatang || 0;
+        inv.arrearsSatang = arrearsToRoll;
         inv.totalSatang = totalSatang;
         inv.balanceDueSatang = Math.max(0, totalSatang - inv.paidSatang);
         inv.status = inv.balanceDueSatang === 0 ? 'PAID' : inv.paidSatang > 0 ? 'PARTIAL' : 'ISSUED';
+        rm.arrearsSatang = inv.balanceDueSatang === 0 ? 0 : arrearsToRoll;
       } else {
         state.invoices.push({
           id: `INV-${period.replace('-', '')}-${rm.roomNumber}`,
@@ -539,18 +594,18 @@ export async function commitBulkMeters(readings: any[]): Promise<AppState> {
           rentSatang: rm.rentSatang,
           parkingType: rm.parkingType,
           parkingFeeSatang: parkingSatang,
-          prevWater: rm.prevWater,
-          currWater: rm.currWater,
-          waterRoll: rm.waterRoll,
+          prevWater: prevW,
+          currWater: currW,
+          waterRoll: waterRoll,
           waterUnits: wUnits,
           waterSatang: wSatang,
-          prevElec: rm.prevElec,
-          currElec: rm.currElec,
-          elecRoll: rm.elecRoll,
+          prevElec: prevE,
+          currElec: currE,
+          elecRoll: elecRoll,
           elecUnits: eUnits,
           elecSatang: eSatang,
-          arrearsSatang: rm.arrearsSatang || 0,
-          arrearsMonthsCount: rm.arrearsSatang > 0 ? 1 : 0,
+          arrearsSatang: arrearsToRoll,
+          arrearsMonthsCount: arrearsToRoll > 0 ? 1 : 0,
           lateFeeSatang: 0,
           totalSatang: totalSatang,
           paidSatang: 0,
@@ -558,11 +613,14 @@ export async function commitBulkMeters(readings: any[]): Promise<AppState> {
           status: 'ISSUED',
           payments: []
         });
+        rm.arrearsSatang = arrearsToRoll;
       }
 
-      // B1: Advance meter base readings for the next cycle and reset rollover flags
-      rm.prevWater = rm.currWater;
-      rm.prevElec = rm.currElec;
+      // B1: Advance room meter readings for the NEXT cycle and reset rollover flags
+      rm.currWater = currW;
+      rm.currElec = currE;
+      rm.prevWater = currW;
+      rm.prevElec = currE;
       rm.waterRoll = false;
       rm.elecRoll = false;
     });
@@ -651,8 +709,8 @@ export async function recordPayment(payload: {
   if (inv) {
     const lateSatang = calcLateFeeSatang(inv, state.simulatedDate, state.settings);
 
-    if (lateSatang > 0 && inv.lateFeeSatang === 0) {
-      inv.lateFeeSatang = lateSatang;
+    if (lateSatang > 0) {
+      inv.lateFeeSatang = (inv.lateFeeSatang || 0) + lateSatang;
       inv.totalSatang += lateSatang;
       inv.balanceDueSatang += lateSatang;
     }
@@ -683,16 +741,16 @@ export async function recordPayment(payload: {
 
 export async function submitMoveOut(payload: any): Promise<{ state: AppState; netRefundSatang: number }> {
   const state = await getActiveState();
-  const { roomNumber, currWater, currElec, cleaningFeeSatang, damageFeeSatang } = payload;
+  const { roomNumber, currWater, currElec, waterRoll, elecRoll, cleaningFeeSatang, damageFeeSatang } = payload;
   const rm = state.rooms.find(r => r.roomNumber === roomNumber);
   let netRefundSatang = 0;
 
   if (rm) {
     const s = state.settings;
-    const cW = Number(currWater) >= 0 ? Number(currWater) : rm.currWater;
-    const cE = Number(currElec) >= 0 ? Number(currElec) : rm.currElec;
-    const wUnits = calcMeterUnits(rm.currWater, cW, false);
-    const eUnits = calcMeterUnits(rm.currElec, cE, false);
+    const cW = currWater !== undefined && currWater !== null && currWater !== '' && Number(currWater) >= 0 ? Number(currWater) : rm.currWater;
+    const cE = currElec !== undefined && currElec !== null && currElec !== '' && Number(currElec) >= 0 ? Number(currElec) : rm.currElec;
+    const wUnits = calcMeterUnits(rm.currWater, cW, Boolean(waterRoll));
+    const eUnits = calcMeterUnits(rm.currElec, cE, Boolean(elecRoll));
     const finalWaterSatang = Math.max(0, wUnits) * s.waterRateSatang;
     const finalElectricSatang = Math.max(0, eUnits) * s.electricityRateSatang;
     const cleaningSatang = Number(cleaningFeeSatang) || 0;
@@ -703,7 +761,7 @@ export async function submitMoveOut(payload: any): Promise<{ state: AppState; ne
       i => i.roomNumber === roomNumber && i.status !== 'ROLLED_OVER' && i.balanceDueSatang > 0
     );
     const totalInvoiceArrears = unpaidInvoices.reduce((sum, inv) => sum + inv.balanceDueSatang, 0);
-    const arrearsSatang = Math.max(totalInvoiceArrears, rm.arrearsSatang || 0);
+    const arrearsSatang = unpaidInvoices.length > 0 ? totalInvoiceArrears : (rm.arrearsSatang || 0);
 
     // B4: Use actual deposit (if 0 then 0, do not invent 3,500 THB)
     const depositHeldSatang = rm.depositSatang || 0;
@@ -994,10 +1052,20 @@ export async function approveReconcile(
 
   let inv = invoiceId ? state.invoices.find(i => i.id === invoiceId) : undefined;
   if (!inv) {
-    inv = state.invoices.find(i => i.roomNumber === sub.roomNumber && i.balanceDueSatang > 0);
+    inv = getLatestRoomInvoice(state.invoices, sub.roomNumber);
+    if (inv && inv.balanceDueSatang <= 0) {
+      inv = undefined;
+    }
   }
 
   if (inv) {
+    const lateSatang = calcLateFeeSatang(inv, state.simulatedDate, state.settings);
+    if (lateSatang > 0) {
+      inv.lateFeeSatang = (inv.lateFeeSatang || 0) + lateSatang;
+      inv.totalSatang += lateSatang;
+      inv.balanceDueSatang += lateSatang;
+    }
+
     const payRecord: PaymentRecord = {
       id: 'PAY-' + Date.now(),
       paidAt: `${sub.transferDate} ${sub.transferTime}`,
@@ -1014,6 +1082,8 @@ export async function approveReconcile(
     const rm = state.rooms.find(r => r.roomNumber === inv?.roomNumber);
     if (rm && inv.balanceDueSatang === 0) {
       rm.arrearsSatang = 0;
+    } else if (rm) {
+      rm.arrearsSatang = inv.balanceDueSatang;
     }
 
     sub.matchedInvoiceId = inv.id;
@@ -1133,10 +1203,14 @@ export async function approveRegistration(payload: any): Promise<{ success: bool
       : reg.vehicleType === 'BIKE'
       ? state.settings.bikeParkingRateSatang
       : 0;
-  rm.prevWater = Number(initWater) || rm.currWater || 0;
-  rm.currWater = Number(initWater) || rm.currWater || 0;
-  rm.prevElec = Number(initElec) || rm.currElec || 0;
-  rm.currElec = Number(initElec) || rm.currElec || 0;
+  const hasInitWater = initWater !== undefined && initWater !== null && initWater !== '';
+  const hasInitElec = initElec !== undefined && initElec !== null && initElec !== '';
+  const wVal = hasInitWater ? Number(initWater) : (rm.currWater || 0);
+  const eVal = hasInitElec ? Number(initElec) : (rm.currElec || 0);
+  rm.prevWater = wVal;
+  rm.currWater = wVal;
+  rm.prevElec = eVal;
+  rm.currElec = eVal;
   rm.arrearsSatang = 0;
 
   reg.status = 'APPROVED';

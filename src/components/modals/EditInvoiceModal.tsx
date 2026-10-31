@@ -18,45 +18,44 @@ export const EditInvoiceModal: React.FC<EditInvoiceModalProps> = ({
   onClose,
   onSubmit
 }) => {
-  if (!isOpen || !invoice) return null;
-
   const { settings } = state;
 
-  const [rentBaht, setRentBaht] = useState<number>(fromSatang(invoice.rentSatang));
-  const [parkingFeeBaht, setParkingFeeBaht] = useState<number>(fromSatang(invoice.parkingFeeSatang || 0));
+  const [rentBaht, setRentBaht] = useState<number>(0);
+  const [parkingFeeBaht, setParkingFeeBaht] = useState<number>(0);
   
   // Water
-  const [prevWater, setPrevWater] = useState<number>(invoice.prevWater);
-  const [currWater, setCurrWater] = useState<number>(invoice.currWater);
+  const [prevWater, setPrevWater] = useState<number>(0);
+  const [currWater, setCurrWater] = useState<number>(0);
   const [waterRoll, setWaterRoll] = useState<boolean>(false);
-  const [waterBaht, setWaterBaht] = useState<number>(fromSatang(invoice.waterSatang));
+  const [waterBaht, setWaterBaht] = useState<number>(0);
   const [customWaterMoney, setCustomWaterMoney] = useState<boolean>(false);
 
   // Electric
-  const [prevElec, setPrevElec] = useState<number>(invoice.prevElec);
-  const [currElec, setCurrElec] = useState<number>(invoice.currElec);
+  const [prevElec, setPrevElec] = useState<number>(0);
+  const [currElec, setCurrElec] = useState<number>(0);
   const [elecRoll, setElecRoll] = useState<boolean>(false);
-  const [elecBaht, setElecBaht] = useState<number>(fromSatang(invoice.elecSatang));
+  const [elecBaht, setElecBaht] = useState<number>(0);
   const [customElecMoney, setCustomElecMoney] = useState<boolean>(false);
 
   // Arrears & Late
-  const [arrearsBaht, setArrearsBaht] = useState<number>(fromSatang(invoice.arrearsSatang || 0));
-  const [lateFeeBaht, setLateFeeBaht] = useState<number>(fromSatang(invoice.lateFeeSatang || 0));
+  const [arrearsBaht, setArrearsBaht] = useState<number>(0);
+  const [lateFeeBaht, setLateFeeBaht] = useState<number>(0);
 
   // Discount / Adjustment
-  const [discountBaht, setDiscountBaht] = useState<number>(fromSatang(invoice.discountSatang || 0));
-  const [adjustmentNote, setAdjustmentNote] = useState<string>(invoice.adjustmentNote || '');
+  const [discountBaht, setDiscountBaht] = useState<number>(0);
+  const [adjustmentNote, setAdjustmentNote] = useState<string>('');
 
   useEffect(() => {
+    if (!invoice) return;
     setRentBaht(fromSatang(invoice.rentSatang));
     setParkingFeeBaht(fromSatang(invoice.parkingFeeSatang || 0));
     setPrevWater(invoice.prevWater);
     setCurrWater(invoice.currWater);
-    setWaterRoll(false);
+    setWaterRoll(Boolean(invoice.waterRoll));
     setWaterBaht(fromSatang(invoice.waterSatang));
     setPrevElec(invoice.prevElec);
     setCurrElec(invoice.currElec);
-    setElecRoll(false);
+    setElecRoll(Boolean(invoice.elecRoll));
     setElecBaht(fromSatang(invoice.elecSatang));
     setArrearsBaht(fromSatang(invoice.arrearsSatang || 0));
     setLateFeeBaht(fromSatang(invoice.lateFeeSatang || 0));
@@ -64,7 +63,9 @@ export const EditInvoiceModal: React.FC<EditInvoiceModalProps> = ({
     setAdjustmentNote(invoice.adjustmentNote || '');
     setCustomWaterMoney(false);
     setCustomElecMoney(false);
-  }, [invoice]);
+  }, [invoice, isOpen]);
+
+  if (!isOpen || !invoice) return null;
 
   const waterUnits = Math.max(0, calcMeterUnits(prevWater, currWater, waterRoll));
   const elecUnits = Math.max(0, calcMeterUnits(prevElec, currElec, elecRoll));
