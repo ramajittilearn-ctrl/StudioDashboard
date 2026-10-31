@@ -1,0 +1,6 @@
+{
+  "name": "Taky Apartment ERP",
+  "description": "ระบบบริหารจัดการหอพัก 15 ห้อง (3 ชั้น 101-305) จดมิเตอร์น้ำไฟ ออกบิลพร้อม QR PromptPay ลิงก์ LINE OA บันทึกค่าจอดรถ ติดตามยอดค้าง และสรุปรายรับรายจ่ายแบบเรียลไทม์",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

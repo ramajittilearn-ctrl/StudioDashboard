@@ -1,0 +1,83 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Admin privileges granted to p.ramajitti@gmail.com and verified session
+    function isAdmin() {
+      return isSignedIn() &&
+        (request.auth.token.email == 'p.ramajitti@gmail.com' || request.auth.token.email == 'ramajitti.job@gmail.com') &&
+        request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Rooms Collection
+    match /rooms/{roomId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Invoices Collection
+    match /invoices/{invoiceId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Expenses Collection
+    match /expenses/{expenseId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Settlements Collection
+    match /settlements/{settlementId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Settings Collection
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // App state snapshot doc (Realtime Sync)
+    match /app_state/{stateId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Google Form Submissions (Payslips)
+    match /form_submissions/{submissionId} {
+      allow read, create: if true;
+      allow update, delete: if isAdmin();
+    }
+
+    // Tenant Registrations Queue
+    match /registrations/{regId} {
+      allow read, create: if true;
+      allow update, delete: if isAdmin();
+    }
+
+    // Permanent Move-out Archives
+    match /move_out_archives/{archiveId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Backup Snapshots
+    match /backups/{backupId} {
+      allow read, write: if isAdmin();
+    }
+  }
+}

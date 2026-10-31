@@ -1,0 +1,143 @@
+{
+  "entities": {
+    "Room": {
+      "title": "Room",
+      "description": "Dormitory room entity (15 rooms: 101 to 305)",
+      "type": "object",
+      "properties": {
+        "roomNumber": { "type": "string", "maxLength": 10 },
+        "floor": { "type": "number" },
+        "status": { "type": "string", "enum": ["AVAILABLE", "OCCUPIED", "RESERVED", "MAINTENANCE"] },
+        "tier": { "type": "string", "enum": ["STANDARD", "SILVER", "GOLD", "CUSTOM"] },
+        "rentSatang": { "type": "number" },
+        "depositSatang": { "type": "number" },
+        "tenantName": { "type": "string", "maxLength": 150 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "lineId": { "type": "string", "maxLength": 50 },
+        "startDate": { "type": "string", "maxLength": 30 },
+        "parkingType": { "type": "string", "enum": ["NONE", "BIKE", "CAR"] },
+        "parkingFeeSatang": { "type": "number" },
+        "bookingDepositSatang": { "type": "number" },
+        "prevWater": { "type": "number" },
+        "currWater": { "type": "number" },
+        "waterRoll": { "type": "boolean" },
+        "prevElec": { "type": "number" },
+        "currElec": { "type": "number" },
+        "elecRoll": { "type": "boolean" },
+        "arrearsSatang": { "type": "number" }
+      },
+      "required": ["roomNumber", "floor", "status", "tier", "rentSatang"]
+    },
+    "Invoice": {
+      "title": "Invoice",
+      "description": "Monthly invoice generated on the 25th",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 50 },
+        "roomNumber": { "type": "string", "maxLength": 10 },
+        "tenantName": { "type": "string", "maxLength": 150 },
+        "tier": { "type": "string", "maxLength": 20 },
+        "billingPeriod": { "type": "string", "maxLength": 10 },
+        "issueDate": { "type": "string", "maxLength": 20 },
+        "dueDate": { "type": "string", "maxLength": 20 },
+        "rentSatang": { "type": "number" },
+        "parkingType": { "type": "string", "maxLength": 10 },
+        "parkingFeeSatang": { "type": "number" },
+        "prevWater": { "type": "number" },
+        "currWater": { "type": "number" },
+        "waterRoll": { "type": "boolean" },
+        "waterUnits": { "type": "number" },
+        "waterSatang": { "type": "number" },
+        "prevElec": { "type": "number" },
+        "currElec": { "type": "number" },
+        "elecRoll": { "type": "boolean" },
+        "elecUnits": { "type": "number" },
+        "elecSatang": { "type": "number" },
+        "arrearsSatang": { "type": "number" },
+        "lateFeeSatang": { "type": "number" },
+        "totalSatang": { "type": "number" },
+        "paidSatang": { "type": "number" },
+        "balanceDueSatang": { "type": "number" },
+        "status": { "type": "string", "enum": ["ISSUED", "PARTIAL", "PAID", "OVERDUE", "ROLLED_OVER"] }
+      },
+      "required": ["id", "roomNumber", "billingPeriod", "totalSatang", "balanceDueSatang", "status"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Dormitory operating or maintenance expense",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 50 },
+        "date": { "type": "string", "maxLength": 20 },
+        "category": { "type": "string", "maxLength": 50 },
+        "title": { "type": "string", "maxLength": 200 },
+        "amountSatang": { "type": "number" }
+      },
+      "required": ["id", "date", "title", "amountSatang"]
+    },
+    "Settlement": {
+      "title": "Settlement",
+      "description": "Move-out deposit deduction settlement",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 50 },
+        "roomNumber": { "type": "string", "maxLength": 10 },
+        "tenantName": { "type": "string", "maxLength": 150 },
+        "moveOutDate": { "type": "string", "maxLength": 20 },
+        "depositHeldSatang": { "type": "number" },
+        "finalWaterSatang": { "type": "number" },
+        "finalElectricSatang": { "type": "number" },
+        "cleaningFeeSatang": { "type": "number" },
+        "damageFeeSatang": { "type": "number" },
+        "arrearsSatang": { "type": "number" },
+        "netRefundSatang": { "type": "number" }
+      },
+      "required": ["id", "roomNumber", "netRefundSatang"]
+    },
+    "PropertySettings": {
+      "title": "PropertySettings",
+      "description": "Apartment configuration and rates",
+      "type": "object",
+      "properties": {
+        "apartmentName": { "type": "string", "maxLength": 100 },
+        "electricityRateSatang": { "type": "number" },
+        "waterRateSatang": { "type": "number" },
+        "commonFeeSatang": { "type": "number" },
+        "carParkingRateSatang": { "type": "number" },
+        "bikeParkingRateSatang": { "type": "number" },
+        "billingDay": { "type": "number" },
+        "dueDayNextMonth": { "type": "number" },
+        "dailyLateFeeSatang": { "type": "number" },
+        "defaultDepositMonths": { "type": "number" },
+        "promptPayId": { "type": "string", "maxLength": 30 },
+        "bankName": { "type": "string", "maxLength": 100 },
+        "bankAccount": { "type": "string", "maxLength": 50 },
+        "bankOwner": { "type": "string", "maxLength": 100 },
+        "contactInfo": { "type": "string", "maxLength": 150 }
+      },
+      "required": ["apartmentName", "electricityRateSatang", "waterRateSatang", "promptPayId"]
+    }
+  },
+  "firestore": {
+    "/rooms/{roomId}": {
+      "schema": { "$ref": "#/entities/Room" },
+      "description": "Dormitory rooms data"
+    },
+    "/invoices/{invoiceId}": {
+      "schema": { "$ref": "#/entities/Invoice" },
+      "description": "Billing and invoice records"
+    },
+    "/expenses/{expenseId}": {
+      "schema": { "$ref": "#/entities/Expense" },
+      "description": "Property operating expenses"
+    },
+    "/settlements/{settlementId}": {
+      "schema": { "$ref": "#/entities/Settlement" },
+      "description": "Tenant move-out settlements"
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/PropertySettings" },
+      "description": "Property settings and rates"
+    }
+  }
+}

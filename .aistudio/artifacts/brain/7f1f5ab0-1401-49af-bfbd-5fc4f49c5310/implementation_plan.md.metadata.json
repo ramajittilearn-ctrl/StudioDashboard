@@ -1,0 +1,6 @@
+{
+  "summary":  "แผนการพัฒนาระบบ Taky Apartment ERP ฉบับสมบูรณ์:\n1. ระบบเชื่อมต่อ LINE OA ด้วย API Key เพื่อส่งบิลตรงเข้า LINE ของผู้เช่าผ่านระบบ Webapp\n2. ระบบรับยอดชำระเงินจาก Google Form Webhook พร้อมรูปภาพ Payslip เพื่อ Reconcile ตัดยอดบิล\n3. ระบบแจ้งเตือนและอนุมัติการลงทะเบียนผู้เช่าใหม่ เชื่อมโยงห้องว่างแบบ Real-time\n4. ระบบคลังประวัติผู้เช่าย้ายออก (Move-Out Archive Ledger) บันทึกค่าปรับ/ค่าใช้จ่ายถาวรเพื่อตรวจสอบย้อนหลัง\n5. เริ่มต้นระบบเสมือนวันแรก (Day-1 State) พร้อมระบบสำรองข้อมูลอัตโนมัติรายสัปดาห์และกู้คืน (Backup & Recall) เฉพาะ Admin (p.ramajitti@gmail.com)",
+  "updatedAt":  "2026-10-31T10:53:04.156391772Z",
+  "requestFeedback":  true,
+  "userFacing":  true
+}
