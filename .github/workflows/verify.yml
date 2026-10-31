@@ -1,0 +1,39 @@
+name: Verify StudioDashboard
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Check types
+        run: npm run lint
+
+      - name: Build client
+        run: npm run build
+
+      - name: Confirm no active tenant state is tracked
+        shell: bash
+        run: |
+          if git ls-files --error-unmatch data/dormitory_state.json >/dev/null 2>&1; then
+            echo "::error::Runtime tenant data must not be tracked in Git"
+            exit 1
+          fi
