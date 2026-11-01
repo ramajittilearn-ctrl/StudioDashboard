@@ -241,16 +241,16 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Quick Modal Triggers on the right side of tab bar */}
         <div className="ml-auto flex items-center gap-1.5 py-1 whitespace-nowrap">
-          {onSyncGoogleForms && settings.googleAppsScriptUrl && (
+          {onSyncGoogleForms && (
             <button
               type="button"
               onClick={onSyncGoogleForms}
               disabled={isSyncingForms}
-              className="px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 text-xs font-semibold flex items-center gap-1 transition"
-              title="ดึงข้อมูลสลิปและผู้เช่าลงทะเบียนใหม่จาก Google Form ทันที"
+              className="px-2.5 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-xs font-semibold flex items-center gap-1.5 transition"
+              title="ดึงข้อมูลผู้เช่าลงทะเบียนและสลิปโอนเงินล่าสุดจาก Google Drive"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isSyncingForms ? 'animate-spin' : ''}`} />
-              <span>ซิงก์ฟอร์ม</span>
+              <span>{isSyncingForms ? 'กำลังดึง...' : 'ดึงข้อมูล Google Drive'}</span>
             </button>
           )}
 

@@ -11,6 +11,11 @@ import {
 import { calcLateFeeSatang, calcMeterUnits, calcNextDueDate, calcProratedRentSatang, formatBaht, getLatestRoomInvoice } from '../lib/finance';
 import { saveStateToFirestore } from '../lib/firebase';
 import { LIVE_INFORM_PAGE_URL, LIVE_PAYMENT_FORM_URL, LIVE_REGISTRATION_FORM_URL } from '../lib/bridgeScript';
+import {
+  DEFAULT_PAYMENTS_SHEET_ID,
+  DEFAULT_REGISTRATIONS_SHEET_ID,
+  pullBothGoogleSheets
+} from '../lib/googleDriveSync';
 
 export function createDayOneState(): AppState {
   const settings: PropertySettings = {
@@ -254,6 +259,8 @@ function normalizeState(s: AppState): AppState {
     ...s,
     settings: {
       ...s.settings,
+      registrationsSheetId: s.settings.registrationsSheetId || DEFAULT_REGISTRATIONS_SHEET_ID,
+      paymentsSheetId: s.settings.paymentsSheetId || DEFAULT_PAYMENTS_SHEET_ID,
       paymentFormUrl: s.settings.paymentFormUrl || LIVE_PAYMENT_FORM_URL,
       registrationFormUrl: s.settings.registrationFormUrl || LIVE_REGISTRATION_FORM_URL,
       informPageUrl: s.settings.informPageUrl || LIVE_INFORM_PAGE_URL
@@ -1099,7 +1106,172 @@ export interface GoogleBridgeSyncResult {
   pendingPaymentsCount: number;
   pendingRegistrationsCount: number;
   dueDay?: number;
+  connectedEmail?: string;
+  partialWarning?: string;
   state: AppState;
+}
+
+function mergeIncomingGoogleRows(
+  state: AppState,
+  incomingPayments: any[],
+  incomingRegs: any[]
+): { changed: boolean; newPaymentsCount: number; newRegistrationsCount: number } {
+  let changed = false;
+  let newPaymentsCount = 0;
+  let newRegistrationsCount = 0;
+
+  state.formSubmissions = state.formSubmissions || [];
+  state.registrations = state.registrations || [];
+
+  incomingPayments.forEach((p, idx) => {
+    const extKey = String(p.externalKey || '').trim();
+    if (!extKey) return;
+    const amountSatang = Math.round(Number(p.amountBaht || 0) * 100);
+    const existing = state.formSubmissions!.find(s => s.externalKey === extKey);
+
+    if (!existing) {
+      const status: FormSubmission['status'] =
+        p.status === 'RECONCILED' ? 'RECONCILED' : p.status === 'REJECTED' ? 'REJECTED' : 'PENDING';
+      state.formSubmissions!.unshift({
+        id: `GF-PAY-${Date.now()}-${idx}`,
+        externalKey: extKey,
+        sheetRow: Number(p.sheetRow) || undefined,
+        roomNumber: String(p.roomNumber || '').trim(),
+        tenantName: String(p.tenantName || '').trim() || `ผู้เช่าห้อง ${p.roomNumber}`,
+        amountSatang,
+        billingPeriod: p.billingPeriod ? String(p.billingPeriod) : undefined,
+        transferDate: String(p.transferDate || state.simulatedDate),
+        transferTime: String(p.transferTime || '12:00'),
+        bankAccount: state.settings.bankName || 'KBank',
+        paymentCategories: p.paymentCategories ? String(p.paymentCategories) : undefined,
+        slipUrl: String(p.slipUrl || ''),
+        driveFileId: p.driveFileId ? String(p.driveFileId) : undefined,
+        submittedAt: String(p.submittedAt || new Date().toISOString()),
+        status,
+        adminNote: p.notes ? String(p.notes) : undefined
+      });
+      changed = true;
+      if (status === 'PENDING') {
+        newPaymentsCount++;
+      }
+    } else {
+      if (p.sheetRow && existing.sheetRow !== Number(p.sheetRow)) {
+        existing.sheetRow = Number(p.sheetRow);
+        changed = true;
+      }
+      if (existing.status === 'PENDING' && (p.status === 'RECONCILED' || p.status === 'REJECTED')) {
+        existing.status = p.status;
+        existing.adminNote = existing.adminNote || 'อัปเดตสถานะจาก Google Sheet';
+        changed = true;
+      }
+    }
+  });
+
+  incomingRegs.forEach((r, idx) => {
+    const extKey = String(r.externalKey || '').trim();
+    if (!extKey) return;
+    const existing = state.registrations!.find(reg => reg.externalKey === extKey);
+
+    if (!existing) {
+      const status: TenantRegistration['status'] =
+        r.status === 'APPROVED' ? 'APPROVED' : r.status === 'REJECTED' ? 'REJECTED' : 'PENDING';
+      const notesStr = r.notes ? String(r.notes).trim() : '';
+      state.registrations!.unshift({
+        id: `GF-REG-${Date.now()}-${idx}`,
+        externalKey: extKey,
+        sheetRow: Number(r.sheetRow) || undefined,
+        requestedRoomNumber: String(r.requestedRoomNumber || '').trim(),
+        tenantName: String(r.tenantName || '').trim() || `ผู้สมัครห้อง ${r.requestedRoomNumber}`,
+        phone: String(r.phone || '').trim(),
+        email: r.email ? String(r.email).trim() : undefined,
+        lineId: '',
+        vehicleType: inferVehicleFromNotes(notesStr),
+        plannedMoveInDate: String(r.plannedMoveInDate || state.simulatedDate),
+        notes: notesStr || undefined,
+        depositPaidSatang: 0,
+        status,
+        submittedAt: String(r.submittedAt || new Date().toISOString())
+      });
+      changed = true;
+      if (status === 'PENDING') {
+        newRegistrationsCount++;
+      }
+    } else {
+      if (r.sheetRow && existing.sheetRow !== Number(r.sheetRow)) {
+        existing.sheetRow = Number(r.sheetRow);
+        changed = true;
+      }
+      if (existing.status === 'PENDING' && (r.status === 'APPROVED' || r.status === 'REJECTED')) {
+        existing.status = r.status;
+        changed = true;
+      }
+    }
+  });
+
+  return { changed, newPaymentsCount, newRegistrationsCount };
+}
+
+/**
+ * One-click pull directly from Google Drive / Google Sheets (or Apps Script Bridge if configured).
+ * Keeps synchronous execution up to signInWithPopup so browser popup blockers never trigger.
+ */
+export async function syncLatestGoogleDriveForms(options?: {
+  interactive?: boolean;
+  forceAccountSelect?: boolean;
+  linkShareOnly?: boolean;
+  forceDirectDrive?: boolean;
+}): Promise<GoogleBridgeSyncResult> {
+  if (!cachedState) {
+    throw new Error(NOT_LOADED_ERROR);
+  }
+
+  const currentSettings = cachedState.settings;
+  const fallbackDate = cachedState.simulatedDate;
+
+  // Use Apps Script Bridge if already configured and not explicitly forcing direct Google Drive mode
+  if (
+    !options?.forceDirectDrive &&
+    !options?.forceAccountSelect &&
+    !options?.linkShareOnly &&
+    currentSettings.googleAppsScriptUrl?.trim() &&
+    currentSettings.googleAppsScriptToken?.trim()
+  ) {
+    return syncGoogleFormsFromBridge();
+  }
+
+  const pulled = await pullBothGoogleSheets({
+    registrationsSheetId: currentSettings.registrationsSheetId || DEFAULT_REGISTRATIONS_SHEET_ID,
+    paymentsSheetId: currentSettings.paymentsSheetId || DEFAULT_PAYMENTS_SHEET_ID,
+    fallbackDate,
+    interactive: options?.interactive,
+    forceAccountSelect: options?.forceAccountSelect,
+    linkShareOnly: options?.linkShareOnly
+  });
+
+  const state = await getActiveState();
+  const merged = mergeIncomingGoogleRows(state, pulled.payments, pulled.registrations);
+  let changed = merged.changed;
+
+  if (options?.interactive || changed) {
+    state.settings.lastGoogleSyncAt = new Date().toISOString();
+    changed = true;
+  }
+
+  const finalState = changed ? await persistState(state) : state;
+  const pendingPaymentsCount = (finalState.formSubmissions || []).filter(s => s.status === 'PENDING').length;
+  const pendingRegistrationsCount = (finalState.registrations || []).filter(r => r.status === 'PENDING').length;
+
+  return {
+    synced: true,
+    changed,
+    newPaymentsCount: merged.newPaymentsCount,
+    newRegistrationsCount: merged.newRegistrationsCount,
+    pendingPaymentsCount,
+    pendingRegistrationsCount,
+    connectedEmail: pulled.connectedEmail,
+    partialWarning: pulled.partialWarning,
+    state: finalState
+  };
 }
 
 export async function syncGoogleFormsFromBridge(
@@ -1142,8 +1314,6 @@ export async function syncGoogleFormsFromBridge(
   }
 
   let changed = false;
-  let newPaymentsCount = 0;
-  let newRegistrationsCount = 0;
 
   if (
     (overrideUrl !== undefined && url !== (state.settings.googleAppsScriptUrl || '')) ||
@@ -1154,96 +1324,13 @@ export async function syncGoogleFormsFromBridge(
     changed = true;
   }
 
-  state.formSubmissions = state.formSubmissions || [];
-  state.registrations = state.registrations || [];
-
   const incomingPayments: any[] = Array.isArray(data.payments) ? data.payments : [];
-  incomingPayments.forEach((p, idx) => {
-    const extKey = String(p.externalKey || '').trim();
-    if (!extKey) return;
-    const amountSatang = Math.round(Number(p.amountBaht || 0) * 100);
-    const existing = state.formSubmissions!.find(s => s.externalKey === extKey);
-
-    if (!existing) {
-      const status: FormSubmission['status'] =
-        p.status === 'RECONCILED' ? 'RECONCILED' : p.status === 'REJECTED' ? 'REJECTED' : 'PENDING';
-      state.formSubmissions!.unshift({
-        id: `GF-PAY-${Date.now()}-${idx}`,
-        externalKey: extKey,
-        sheetRow: Number(p.sheetRow) || undefined,
-        roomNumber: String(p.roomNumber || '').trim(),
-        tenantName: String(p.tenantName || '').trim() || `ผู้เช่าห้อง ${p.roomNumber}`,
-        amountSatang,
-        billingPeriod: p.billingPeriod ? String(p.billingPeriod) : undefined,
-        transferDate: String(p.transferDate || state.simulatedDate),
-        transferTime: String(p.transferTime || '12:00'),
-        bankAccount: state.settings.bankName || 'KBank',
-        paymentCategories: p.paymentCategories ? String(p.paymentCategories) : undefined,
-        slipUrl: String(p.slipUrl || ''),
-        driveFileId: p.driveFileId ? String(p.driveFileId) : undefined,
-        submittedAt: String(p.submittedAt || new Date().toISOString()),
-        status,
-        adminNote: p.notes ? String(p.notes) : undefined
-      });
-      changed = true;
-      if (status === 'PENDING') {
-        newPaymentsCount++;
-      }
-    } else {
-      if (p.sheetRow && existing.sheetRow !== Number(p.sheetRow)) {
-        existing.sheetRow = Number(p.sheetRow);
-        changed = true;
-      }
-      // If reconciled or rejected directly on the Google Sheet while still PENDING on Dashboard, reflect it
-      if (existing.status === 'PENDING' && (p.status === 'RECONCILED' || p.status === 'REJECTED')) {
-        existing.status = p.status;
-        existing.adminNote = existing.adminNote || 'อัปเดตสถานะจาก Google Sheet';
-        changed = true;
-      }
-    }
-  });
-
   const incomingRegs: any[] = Array.isArray(data.registrations) ? data.registrations : [];
-  incomingRegs.forEach((r, idx) => {
-    const extKey = String(r.externalKey || '').trim();
-    if (!extKey) return;
-    const existing = state.registrations!.find(reg => reg.externalKey === extKey);
-
-    if (!existing) {
-      const status: TenantRegistration['status'] =
-        r.status === 'APPROVED' ? 'APPROVED' : r.status === 'REJECTED' ? 'REJECTED' : 'PENDING';
-      const notesStr = r.notes ? String(r.notes).trim() : '';
-      state.registrations!.unshift({
-        id: `GF-REG-${Date.now()}-${idx}`,
-        externalKey: extKey,
-        sheetRow: Number(r.sheetRow) || undefined,
-        requestedRoomNumber: String(r.requestedRoomNumber || '').trim(),
-        tenantName: String(r.tenantName || '').trim() || `ผู้สมัครห้อง ${r.requestedRoomNumber}`,
-        phone: String(r.phone || '').trim(),
-        email: r.email ? String(r.email).trim() : undefined,
-        lineId: '',
-        vehicleType: inferVehicleFromNotes(notesStr),
-        plannedMoveInDate: String(r.plannedMoveInDate || state.simulatedDate),
-        notes: notesStr || undefined,
-        depositPaidSatang: 0,
-        status,
-        submittedAt: String(r.submittedAt || new Date().toISOString())
-      });
-      changed = true;
-      if (status === 'PENDING') {
-        newRegistrationsCount++;
-      }
-    } else {
-      if (r.sheetRow && existing.sheetRow !== Number(r.sheetRow)) {
-        existing.sheetRow = Number(r.sheetRow);
-        changed = true;
-      }
-      if (existing.status === 'PENDING' && (r.status === 'APPROVED' || r.status === 'REJECTED')) {
-        existing.status = r.status;
-        changed = true;
-      }
-    }
-  });
+  const merged = mergeIncomingGoogleRows(state, incomingPayments, incomingRegs);
+  if (merged.changed) {
+    changed = true;
+    state.settings.lastGoogleSyncAt = new Date().toISOString();
+  }
 
   const finalState = changed ? await persistState(state) : state;
   const pendingPaymentsCount = (finalState.formSubmissions || []).filter(s => s.status === 'PENDING').length;
@@ -1252,8 +1339,8 @@ export async function syncGoogleFormsFromBridge(
   return {
     synced: true,
     changed,
-    newPaymentsCount,
-    newRegistrationsCount,
+    newPaymentsCount: merged.newPaymentsCount,
+    newRegistrationsCount: merged.newRegistrationsCount,
     pendingPaymentsCount,
     pendingRegistrationsCount,
     dueDay: data.dueDay,

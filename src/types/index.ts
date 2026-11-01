@@ -27,6 +27,9 @@ export interface PropertySettings {
   lineDestinationId?: string;   // Target user or group ID
   googleAppsScriptUrl?: string; // Web App URL (/exec) from DashboardBridge.gs
   googleAppsScriptToken?: string; // Secret BRIDGE_TOKEN
+  registrationsSheetId?: string;
+  paymentsSheetId?: string;
+  lastGoogleSyncAt?: string;
   paymentFormUrl?: string;
   registrationFormUrl?: string;
   informPageUrl?: string;

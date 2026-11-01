@@ -20,10 +20,11 @@ import {
   addExpense,
   deleteExpense,
   sendLineNotification,
-  syncGoogleFormsFromBridge,
+  syncLatestGoogleDriveForms,
   resetDatabase,
   restoreBackup
 } from './api/client';
+import { GoogleDriveAccessError } from './lib/googleDriveSync';
 import {
   auth,
   loginWithGoogle,
@@ -191,11 +192,9 @@ export default function App() {
     }, 500);
   };
 
-  // Auto-poll Google Forms Bridge (Payments & Tenant Registrations) every 45s and on window focus
+  // Auto-poll Google Drive / Google Forms silently every 45s and on window focus
   useEffect(() => {
-    const bridgeUrl = state?.settings.googleAppsScriptUrl?.trim();
-    const bridgeToken = state?.settings.googleAppsScriptToken?.trim();
-    if (!currentUser || !isUserAdmin(currentUser) || !bridgeUrl || !bridgeToken) {
+    if (!currentUser || !isUserAdmin(currentUser) || !state) {
       return;
     }
 
@@ -204,7 +203,7 @@ export default function App() {
       if (cancelled || syncingFormsRef.current) return;
       syncingFormsRef.current = true;
       try {
-        const res = await syncGoogleFormsFromBridge();
+        const res = await syncLatestGoogleDriveForms({ interactive: false });
         if (cancelled) return;
         if (res.changed) {
           await syncBothStores(res.state);
@@ -214,12 +213,12 @@ export default function App() {
             `🔔 มีผู้เช่าลงทะเบียนใหม่ ${res.newRegistrationsCount} รายการ และแจ้งโอนใหม่ ${res.newPaymentsCount} รายการ!`
           );
         } else if (res.newRegistrationsCount > 0) {
-          showToast(`🔔 มีผู้เช่าลงทะเบียนใหม่จาก Google Form ${res.newRegistrationsCount} รายการ!`);
+          showToast(`🔔 มีผู้เช่าลงทะเบียนใหม่จาก Google Drive ${res.newRegistrationsCount} รายการ!`);
         } else if (res.newPaymentsCount > 0) {
-          showToast(`💳 มีแจ้งชำระเงินแนบสลิปใหม่จาก Google Form ${res.newPaymentsCount} รายการ!`);
+          showToast(`💳 มีแจ้งชำระเงินแนบสลิปใหม่จาก Google Drive ${res.newPaymentsCount} รายการ!`);
         }
-      } catch (err) {
-        console.warn('Background Google Form sync skipped:', err);
+      } catch {
+        // Silent in background; interactive click handles permissions/account selection
       } finally {
         syncingFormsRef.current = false;
       }
@@ -237,6 +236,7 @@ export default function App() {
     };
   }, [
     currentUser?.uid,
+    Boolean(state),
     state?.settings.googleAppsScriptUrl,
     state?.settings.googleAppsScriptToken
   ]);
@@ -514,15 +514,30 @@ export default function App() {
     syncingFormsRef.current = true;
     setIsSyncingForms(true);
     try {
-      const res = await syncGoogleFormsFromBridge();
-      if (res.changed) {
-        await syncBothStores(res.state);
+      const res = await syncLatestGoogleDriveForms({ interactive: true });
+      await syncBothStores(res.state);
+      if (res.newRegistrationsCount > 0) {
+        showToast(
+          `🔔 พบผู้เช่าลงทะเบียนใหม่ ${res.newRegistrationsCount} รายการ! (รออนุมัติทั้งหมด ${res.pendingRegistrationsCount} รายการ)`
+        );
+        setIsRegistrationOpen(true);
+      } else if (res.newPaymentsCount > 0) {
+        showToast(
+          `💳 พบแจ้งชำระเงินใหม่ ${res.newPaymentsCount} รายการ! (รอตรวจทั้งหมด ${res.pendingPaymentsCount} รายการ)`
+        );
+        setIsReconcileOpen(true);
+      } else {
+        showToast(
+          `✔ ดึงข้อมูลล่าสุดจาก Google Drive สำเร็จ (รออนุมัติเข้าพัก ${res.pendingRegistrationsCount} • รอตรวจสลิป ${res.pendingPaymentsCount})`
+        );
       }
-      showToast(
-        `ซิงก์ Google Form สำเร็จ (รออนุมัติเข้าพัก ${res.pendingRegistrationsCount} • รอตรวจสลิป ${res.pendingPaymentsCount})`
-      );
     } catch (err: any) {
-      showToast('❌ ซิงก์ Google Form ไม่สำเร็จ: ' + (err.message || 'กรุณาตรวจสอบการตั้งค่า'));
+      if (err instanceof GoogleDriveAccessError) {
+        setIsRegistrationOpen(true);
+        showToast('กรุณาเลือกบัญชี Google ที่เก็บไฟล์ฟอร์ม หรือเปิดแชร์ลิงก์ชีตในหน้าต่างที่เปิดขึ้น');
+      } else {
+        showToast('❌ ดึงข้อมูลไม่สำเร็จ: ' + (err.message || 'กรุณาลองอีกครั้ง'));
+      }
     } finally {
       syncingFormsRef.current = false;
       setIsSyncingForms(false);
@@ -573,6 +588,8 @@ export default function App() {
             onOpenReconcileModal={() => setIsReconcileOpen(true)}
             onOpenRegistrationModal={() => setIsRegistrationOpen(true)}
             onOpenBackupRecallModal={() => setIsBackupRecallOpen(true)}
+            onSyncGoogleForms={handleManualSyncForms}
+            isSyncingForms={isSyncingForms}
           />
         )}
 

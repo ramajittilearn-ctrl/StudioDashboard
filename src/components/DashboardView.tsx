@@ -18,7 +18,8 @@ import {
   Building,
   CreditCard,
   ShieldAlert,
-  Percent
+  Percent,
+  RefreshCw
 } from 'lucide-react';
 
 interface DashboardViewProps {
@@ -30,6 +31,8 @@ interface DashboardViewProps {
   onOpenReconcileModal?: () => void;
   onOpenRegistrationModal?: () => void;
   onOpenBackupRecallModal?: () => void;
+  onSyncGoogleForms?: () => void;
+  isSyncingForms?: boolean;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -40,7 +43,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onSendLineNotify,
   onOpenReconcileModal,
   onOpenRegistrationModal,
-  onOpenBackupRecallModal
+  onOpenBackupRecallModal,
+  onSyncGoogleForms,
+  isSyncingForms = false
 }) => {
   const { rooms, invoices, expenses, settings, simulatedDate } = state;
   const pendingSubmissions = (state.formSubmissions || []).filter(s => s.status === 'PENDING');
@@ -110,32 +115,47 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const parkPct = Math.round((totalParkingSatang / safeTotalBilled) * 100);
   const arrearsPct = Math.max(0, 100 - (rentPct + elecPct + waterPct + parkPct));
 
+  const lastSyncLabel = settings.lastGoogleSyncAt
+    ? new Date(settings.lastGoogleSyncAt).toLocaleTimeString('th-TH', {
+        hour: '2-digit',
+        minute: '2-digit'
+      })
+    : null;
+
   return (
     <div className="space-y-6">
-      {/* Google Form Connection Prompt if not configured yet */}
-      {(!settings.googleAppsScriptUrl || !settings.googleAppsScriptToken) && onOpenRegistrationModal && (
-        <div className="bg-slate-900 border border-sky-500/40 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 text-xs shadow-md">
+      {/* One-Click Google Drive Sync Bar */}
+      {onSyncGoogleForms && (
+        <div className="bg-slate-900 border border-emerald-500/40 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 text-xs shadow-md">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-sky-500/20 text-sky-400 border border-sky-500/40 flex items-center justify-center font-bold text-base shrink-0">
-              🔗
+            <div className="w-9 h-9 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center font-bold text-base shrink-0">
+              <RefreshCw className={`w-4 h-4 ${isSyncingForms ? 'animate-spin' : ''}`} />
             </div>
             <div>
-              <div className="font-bold text-white text-sm">
-                เชื่อมต่อ Google Form จริงของหอพัก (ลงทะเบียนผู้เช่า + แจ้งชำระเงิน)
+              <div className="font-bold text-white text-sm flex flex-wrap items-center gap-2">
+                <span>ซิงก์ข้อมูลล่าสุดจาก Google Drive (ลงทะเบียนห้องพัก &amp; แจ้งชำระเงิน)</span>
+                {lastSyncLabel && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-medium">
+                    ดึงล่าสุด {lastSyncLabel} น.
+                  </span>
+                )}
               </div>
               <p className="text-slate-300 text-[11px] mt-0.5">
-                ผูก Web App URL ของ Google Sheet เพียงครั้งเดียว เพื่อให้ระบบแจ้งเตือนเมื่อมีผู้เช่าลงทะเบียนหรือส่งสลิปใหม่ และกดอนุมัติเข้าห้องได้ทันที
+                กดปุ่มรีเฟรชเพื่อดึงรายการจอง/ลงทะเบียนผู้เช่าใหม่และสลิปโอนเงินล่าสุดจาก Google Sheet ใน Google Drive ขึ้นมาแจ้งเตือนทันที
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onOpenRegistrationModal}
-            className="px-4 py-2 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold shadow-md transition flex items-center gap-1.5 shrink-0"
-          >
-            <span>⚙️ ตั้งค่าเชื่อมต่อ Google Form</span>
-            <ArrowUpRight className="w-3.5 h-3.5" />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onSyncGoogleForms}
+              disabled={isSyncingForms}
+              className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold shadow-md transition flex items-center gap-1.5"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingForms ? 'animate-spin' : ''}`} />
+              <span>{isSyncingForms ? 'กำลังดึงข้อมูลจาก Google Drive...' : '🔄 กดดึงข้อมูลล่าสุดจาก Google Drive'}</span>
+            </button>
+          </div>
         </div>
       )}
 

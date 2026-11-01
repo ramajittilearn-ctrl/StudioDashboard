@@ -18,13 +18,22 @@ import {
   manualUploadSlip,
   refreshGoogleFormsViaBridge,
   rejectReconcile,
-  syncGoogleFormsFromBridge
+  syncGoogleFormsFromBridge,
+  syncLatestGoogleDriveForms
 } from '../../api/client';
 import {
   DASHBOARD_BRIDGE_GS,
   LIVE_INFORM_PAGE_URL,
   LIVE_PAYMENT_FORM_URL
 } from '../../lib/bridgeScript';
+import {
+  LIVE_REGISTRATIONS_SHEET_URL,
+  LIVE_PAYMENTS_SHEET_URL,
+  getCachedDriveAuth,
+  clearCachedDriveAuth,
+  isLinkShareModeKnown,
+  GoogleDriveAccessError
+} from '../../lib/googleDriveSync';
 
 interface ReconcileModalProps {
   isOpen: boolean;
@@ -133,18 +142,56 @@ export const ReconcileModal: React.FC<ReconcileModalProps> = ({
     }
   }
 
+  const cachedDriveAuth = getCachedDriveAuth();
   const isBridgeConfigured = Boolean(settings.googleAppsScriptUrl && settings.googleAppsScriptToken);
+  const isDriveConnected = Boolean(cachedDriveAuth || isLinkShareModeKnown() || isBridgeConfigured);
   const livePaymentFormUrl = settings.paymentFormUrl || LIVE_PAYMENT_FORM_URL;
   const liveInformPageUrl = settings.informPageUrl || LIVE_INFORM_PAGE_URL;
 
-  const handleSyncNow = async (overrideU?: string, overrideT?: string) => {
+  const handleDirectDriveSync = async (opts?: { forceAccountSelect?: boolean; linkShareOnly?: boolean }) => {
+    setIsSyncing(true);
+    setSyncStatusMsg(null);
+    try {
+      const res = await syncLatestGoogleDriveForms({
+        interactive: true,
+        forceAccountSelect: opts?.forceAccountSelect,
+        linkShareOnly: opts?.linkShareOnly,
+        forceDirectDrive: Boolean(opts?.forceAccountSelect || opts?.linkShareOnly)
+      });
+      onRefreshState();
+      const warningSuffix = res.partialWarning ? ` (${res.partialWarning})` : '';
+      setSyncStatusMsg({
+        ok: true,
+        text: `ดึงข้อมูลล่าสุดจาก Google Drive สำเร็จ! พบสลิปรอตรวจ ${res.pendingPaymentsCount} รายการ (มาใหม่ ${res.newPaymentsCount}) • คำขอลงทะเบียนรออนุมัติ ${res.pendingRegistrationsCount} รายการ${warningSuffix}`
+      });
+      if (res.pendingPaymentsCount > 0) {
+        setActiveTab('pending');
+      }
+    } catch (err: any) {
+      if (err instanceof GoogleDriveAccessError) {
+        setActiveTab('script');
+        setSyncStatusMsg({
+          ok: false,
+          text: err.message
+        });
+      } else {
+        setSyncStatusMsg({
+          ok: false,
+          text: err.message || 'ไม่สามารถดึงข้อมูลจาก Google Drive ได้'
+        });
+      }
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleSaveBridgeSync = async (overrideU?: string, overrideT?: string) => {
     const u = (overrideU !== undefined ? overrideU : bridgeUrl).trim();
     const t = (overrideT !== undefined ? overrideT : bridgeToken).trim();
     if (!u || !t) {
-      setActiveTab('script');
       setSyncStatusMsg({
         ok: false,
-        text: 'กรุณาวาง Apps Script Web App URL และ Secret Token ด้านล่างก่อนกดดึงสลิป'
+        text: 'กรุณาวาง Apps Script Web App URL และ Secret Token ด้านล่างก่อนกดบันทึก'
       });
       return;
     }
@@ -155,15 +202,15 @@ export const ReconcileModal: React.FC<ReconcileModalProps> = ({
       onRefreshState();
       setSyncStatusMsg({
         ok: true,
-        text: `ซิงก์สำเร็จ! พบสลิปรอตรวจ ${res.pendingPaymentsCount} รายการ (มาใหม่ ${res.newPaymentsCount}) • คำขอลงทะเบียนรออนุมัติ ${res.pendingRegistrationsCount} รายการ`
+        text: `เชื่อมต่อ Apps Script สำเร็จ! พบสลิปรอตรวจ ${res.pendingPaymentsCount} รายการ (มาใหม่ ${res.newPaymentsCount}) • คำขอลงทะเบียนรออนุมัติ ${res.pendingRegistrationsCount} รายการ`
       });
-      if (res.pendingPaymentsCount > 0 && overrideU === undefined) {
+      if (res.pendingPaymentsCount > 0) {
         setActiveTab('pending');
       }
     } catch (err: any) {
       setSyncStatusMsg({
         ok: false,
-        text: err.message || 'ไม่สามารถดึงข้อมูลจาก Google Form ได้'
+        text: err.message || 'ไม่สามารถดึงข้อมูลจาก Apps Script ได้'
       });
     } finally {
       setIsSyncing(false);
@@ -283,12 +330,12 @@ export const ReconcileModal: React.FC<ReconcileModalProps> = ({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => handleSyncNow()}
+              onClick={() => handleDirectDriveSync()}
               disabled={isSyncing}
-              className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-semibold flex items-center gap-1.5 transition"
+              className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 shadow-sm transition"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-              <span>{isSyncing ? 'กำลังดึงสลิป...' : 'ดึงสลิปจาก Google Form'}</span>
+              <span>{isSyncing ? 'กำลังดึงสลิป...' : 'ดึงสลิปล่าสุดจาก Google Drive'}</span>
             </button>
             <button
               type="button"
@@ -333,8 +380,8 @@ export const ReconcileModal: React.FC<ReconcileModalProps> = ({
                 : 'border-transparent text-slate-400 hover:text-slate-200'
             }`}
           >
-            <span>⚙️ เชื่อมต่อ Google Form</span>
-            {isBridgeConfigured && <span className="w-2 h-2 rounded-full bg-emerald-400" />}
+            <span>⚙️ เชื่อมต่อ Google Drive</span>
+            {isDriveConnected && <span className="w-2 h-2 rounded-full bg-emerald-400" />}
           </button>
           <button
             type="button"
@@ -376,30 +423,25 @@ export const ReconcileModal: React.FC<ReconcileModalProps> = ({
                 <CheckCircle2 className="w-12 h-12 text-emerald-400 mx-auto opacity-80" />
                 <h3 className="text-base font-semibold text-slate-200">ไม่มีสลิปค้างรอตรวจสอบ</h3>
                 <p className="text-xs text-slate-400 max-w-md mx-auto">
-                  {isBridgeConfigured
-                    ? 'เชื่อมต่อ Google Form เรียบร้อยแล้ว ระบบจะเช็กสลิปใหม่อัตโนมัติทุก 45 วินาที หรือกดปุ่มดึงสลิปทันทีด้านล่าง'
-                    : 'ยังไม่ได้ผูก URL ของ Google Apps Script — กดปุ่ม "ตั้งค่าเชื่อมต่อ Google Form" เพื่อดึงสลิปโอนเงินจริงจากฟอร์มของหอพัก'}
+                  กดปุ่ม <strong>"ดึงสลิปล่าสุดจาก Google Drive ทันที"</strong> ด้านล่างเพื่อเช็กสลิปโอนเงินใหม่จาก Google Sheet ของหอพักโดยตรง
                 </p>
                 <div className="pt-2 flex flex-wrap justify-center gap-2">
-                  {isBridgeConfigured ? (
-                    <button
-                      type="button"
-                      onClick={() => handleSyncNow()}
-                      disabled={isSyncing}
-                      className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition flex items-center gap-1.5"
-                    >
-                      <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-                      <span>ดึงสลิปใหม่จาก Google Form ทันที</span>
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('script')}
-                      className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition"
-                    >
-                      ⚙️ ตั้งค่าเชื่อมต่อ Google Form
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleDirectDriveSync()}
+                    disabled={isSyncing}
+                    className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-bold transition flex items-center gap-1.5 shadow-lg shadow-amber-950/40"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                    <span>{isSyncing ? 'กำลังดึงสลิป...' : 'ดึงสลิปล่าสุดจาก Google Drive ทันที'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('script')}
+                    className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition"
+                  >
+                    ⚙️ ตั้งค่าบัญชี / แชร์ลิงก์ชีต
+                  </button>
                   <a
                     href={liveInformPageUrl}
                     target="_blank"
@@ -670,117 +712,179 @@ export const ReconcileModal: React.FC<ReconcileModalProps> = ({
 
           {activeTab === 'script' && (
             <div className="space-y-4 text-xs">
-              <div className="bg-slate-950/70 border border-amber-500/30 rounded-2xl p-4 space-y-3">
+              {/* Zero-Code Option 1: Direct Google Account Sign-In */}
+              <div className="bg-slate-950/80 border border-amber-500/40 rounded-2xl p-4 space-y-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
+                    <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-bold mb-1">
+                      วิธีที่ 1 • ไม่ต้องแก้โค้ด
+                    </div>
                     <h3 className="font-bold text-white text-sm">
-                      🔗 เชื่อมต่อ Google Form แจ้งชำระเงิน &amp; ลงทะเบียนผู้เช่า
+                      🔑 กดเลือกบัญชี Google ที่เป็นเจ้าของไฟล์ฟอร์ม (เช่น ramajitti.learn@gmail.com)
                     </h3>
                     <p className="text-slate-400 mt-0.5">
-                      ใช้ URL และ Secret Token เดียวกันสำหรับทั้งฟอร์มแจ้งชำระเงินและฟอร์มลงทะเบียนผู้เช่า (ตั้งค่าที่ใดที่หนึ่งมีผลทั้งระบบ)
+                      ผูกกับชีตแจ้งชำระเงินและชีตลงทะเบียนผู้เช่าของหอพักไว้ให้เรียบร้อยแล้ว — กดปุ่มเพื่อเลือกบัญชีเจ้าของชีตแล้วดึงข้อมูลทันที
                     </p>
                   </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    <a
-                      href={liveInformPageUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 flex items-center gap-1"
-                    >
-                      <ExternalLink className="w-3 h-3" /> หน้าแจ้งโอน (/inform/)
-                    </a>
-                    <a
-                      href={livePaymentFormUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 flex items-center gap-1"
-                    >
-                      <ExternalLink className="w-3 h-3" /> Google Form แจ้งโอน
-                    </a>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-slate-300 font-semibold mb-1">1. Apps Script Web App URL</label>
-                    <input
-                      type="url"
-                      value={bridgeUrl}
-                      onChange={(e) => setBridgeUrl(e.target.value)}
-                      placeholder="https://script.google.com/macros/s/.../exec"
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono text-[11px]"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-slate-300 font-semibold mb-1">
-                      2. Bridge Secret Token (จาก Execution Log)
-                    </label>
-                    <input
-                      type="password"
-                      value={bridgeToken}
-                      onChange={(e) => setBridgeToken(e.target.value)}
-                      placeholder="taky_..."
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono text-[11px]"
-                    />
-                  </div>
+                  {cachedDriveAuth?.email && (
+                    <span className="px-2.5 py-1 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-semibold">
+                      เชื่อมต่อแล้ว: {cachedDriveAuth.email}
+                    </span>
+                  )}
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2 pt-1">
                   <button
                     type="button"
-                    onClick={() => handleSyncNow(bridgeUrl, bridgeToken)}
+                    onClick={() => handleDirectDriveSync({ forceAccountSelect: true })}
                     disabled={isSyncing}
-                    className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold transition flex items-center gap-1.5"
+                    className="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold transition flex items-center gap-1.5 shadow-md"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-                    <span>{isSyncing ? 'กำลังทดสอบ & ซิงก์ข้อมูล...' : '💾 บันทึก & ดึงข้อมูลจาก Google Form ทันที'}</span>
+                    <span>
+                      {isSyncing
+                        ? 'กำลังเชื่อมต่อ Google Drive...'
+                        : '🔑 เลือกบัญชี Google เจ้าของฟอร์ม & ดึงสลิปทันที'}
+                    </span>
                   </button>
-                  {isBridgeConfigured && (
+                  {cachedDriveAuth && (
                     <button
                       type="button"
-                      onClick={handleRefreshFormChoices}
-                      disabled={isRefreshingForm}
-                      className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 font-semibold transition flex items-center gap-1.5"
+                      onClick={() => {
+                        clearCachedDriveAuth();
+                        setSyncStatusMsg({ ok: true, text: 'ล้างบัญชี Google Drive ที่จำไว้แล้ว สามารถเลือกบัญชีใหม่ได้ทันที' });
+                      }}
+                      className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 font-medium transition"
                     >
-                      <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingForm ? 'animate-spin' : ''}`} />
-                      <span>อัปเดตวันครบกำหนด (วันที่ {settings.dueDayNextMonth || 5}) ใน Google Form</span>
+                      สลับบัญชี
                     </button>
                   )}
                 </div>
               </div>
 
-              <div className="bg-slate-950/60 border border-slate-800 rounded-2xl p-4 space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <div className="font-bold text-white text-sm">
-                      โค้ดสำหรับวางใน Google Sheet (ไฟล์ DashboardBridge.gs)
-                    </div>
-                    <p className="text-slate-400 mt-0.5">
-                      เปิด Google Sheet <strong>Taky Apartment — Payments</strong> &rarr;{' '}
-                      <strong>Extensions &gt; Apps Script</strong> &rarr; สร้างไฟล์{' '}
-                      <code className="text-amber-300">DashboardBridge.gs</code> (และเปลี่ยน{' '}
-                      <code className="text-amber-300">DUE_DAY = 5</code> ใน <code className="text-amber-300">Code.gs</code>)
-                      แล้วกด Run <code className="text-emerald-300">setupDashboardBridge</code> และ Deploy เป็น Web App
-                    </p>
+              {/* Zero-Code Option 2: Link-Share Viewer */}
+              <div className="bg-slate-950/80 border border-emerald-500/40 rounded-2xl p-4 space-y-3">
+                <div>
+                  <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-bold mb-1">
+                    วิธีที่ 2 • แนะนำ! ทำครั้งเดียว ดึงอัตโนมัติตลอดไป ไม่ต้องล็อกอินซ้ำ
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(DASHBOARD_BRIDGE_GS);
-                      setCopiedScript(true);
-                      setTimeout(() => setCopiedScript(false), 2500);
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30 text-xs font-semibold transition shrink-0"
-                  >
-                    {copiedScript ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedScript ? 'คัดลอก DashboardBridge.gs แล้ว!' : 'คัดลอกโค้ด DashboardBridge.gs'}</span>
-                  </button>
+                  <h3 className="font-bold text-white text-sm">
+                    📂 เปิดแชร์ลิงก์ Google Sheet แบบ "อ่านอย่างเดียว (Viewer)"
+                  </h3>
+                  <p className="text-slate-300 mt-1 leading-relaxed">
+                    คลิกเปิดชีตทั้ง 2 ไฟล์ด้านล่าง &rarr; กดปุ่ม <strong>แชร์ (Share)</strong> มุมขวาบน &rarr; เปลี่ยนการเข้าถึงทั่วไปเป็น{' '}
+                    <strong className="text-emerald-300">"ทุกคนที่มีลิงก์ (Anyone with the link) = ผู้มีสิทธิ์อ่าน (Viewer)"</strong>{' '}
+                    เพียงครั้งเดียว จากนั้นกดปุ่มดึงข้อมูลได้ตลอดไป!
+                  </p>
                 </div>
 
-                <div className="bg-slate-950 border border-slate-800 rounded-xl p-3 font-mono text-[11px] text-amber-200/90 overflow-x-auto max-h-[220px]">
-                  <pre>{DASHBOARD_BRIDGE_GS}</pre>
+                <div className="flex flex-wrap gap-2">
+                  <a
+                    href={LIVE_PAYMENTS_SHEET_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 font-semibold flex items-center gap-1.5 transition"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>1. เปิดชีตแจ้งชำระเงิน (Google Drive)</span>
+                  </a>
+                  <a
+                    href={LIVE_REGISTRATIONS_SHEET_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-sky-300 border border-slate-700 font-semibold flex items-center gap-1.5 transition"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>2. เปิดชีตลงทะเบียนผู้เช่า (Google Drive)</span>
+                  </a>
+                  <a
+                    href={livePaymentFormUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 flex items-center gap-1.5 transition"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                    <span>ดู Google Form แจ้งโอน</span>
+                  </a>
+                </div>
+
+                <div className="pt-1">
+                  <button
+                    type="button"
+                    onClick={() => handleDirectDriveSync({ linkShareOnly: true })}
+                    disabled={isSyncing}
+                    className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold transition flex items-center gap-1.5 shadow-md"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                    <span>{isSyncing ? 'กำลังดึงข้อมูล...' : '🔄 ตั้งค่าแชร์แล้ว — กดดึงข้อมูลล่าสุดทันที'}</span>
+                  </button>
                 </div>
               </div>
+
+              {/* Optional Advanced 2-way Apps Script Bridge */}
+              <details className="bg-slate-950/50 border border-slate-800 rounded-2xl p-4">
+                <summary className="cursor-pointer font-semibold text-slate-300 hover:text-white select-none">
+                  ⚙️ ตัวเลือกเสริม (ไม่บังคับ): เชื่อมต่อ Apps Script Web App หากต้องการเขียนสถานะกลับลงชีตอัตโนมัติ
+                </summary>
+                <div className="space-y-3 pt-3 mt-3 border-t border-slate-800">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-slate-300 font-semibold mb-1">1. Apps Script Web App URL</label>
+                      <input
+                        type="url"
+                        value={bridgeUrl}
+                        onChange={(e) => setBridgeUrl(e.target.value)}
+                        placeholder="https://script.google.com/macros/s/.../exec"
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono text-[11px]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-slate-300 font-semibold mb-1">2. Bridge Secret Token</label>
+                      <input
+                        type="password"
+                        value={bridgeToken}
+                        onChange={(e) => setBridgeToken(e.target.value)}
+                        placeholder="taky_..."
+                        className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white font-mono text-[11px]"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleSaveBridgeSync(bridgeUrl, bridgeToken)}
+                      disabled={isSyncing}
+                      className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 font-semibold transition flex items-center gap-1.5"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+                      <span>บันทึก Apps Script URL</span>
+                    </button>
+                    {isBridgeConfigured && (
+                      <button
+                        type="button"
+                        onClick={handleRefreshFormChoices}
+                        disabled={isRefreshingForm}
+                        className="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-emerald-500/30 font-semibold transition flex items-center gap-1.5"
+                      >
+                        <RefreshCw className={`w-3.5 h-3.5 ${isRefreshingForm ? 'animate-spin' : ''}`} />
+                        <span>อัปเดตวันครบกำหนด (วันที่ {settings.dueDayNextMonth || 5}) ใน Google Form</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(DASHBOARD_BRIDGE_GS);
+                        setCopiedScript(true);
+                        setTimeout(() => setCopiedScript(false), 2500);
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 font-medium transition"
+                    >
+                      {copiedScript ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedScript ? 'คัดลอก DashboardBridge.gs แล้ว!' : 'คัดลอกโค้ด DashboardBridge.gs'}</span>
+                    </button>
+                  </div>
+                </div>
+              </details>
             </div>
           )}
 
