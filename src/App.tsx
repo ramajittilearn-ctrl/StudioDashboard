@@ -516,19 +516,25 @@ export default function App() {
     try {
       const res = await syncLatestGoogleDriveForms({ interactive: true });
       await syncBothStores(res.state);
-      if (res.newRegistrationsCount > 0) {
+      const warnSuffix = res.partialWarning ? ` ⚠️ ${res.partialWarning}` : '';
+      if (res.newRegistrationsCount > 0 && res.newPaymentsCount > 0) {
         showToast(
-          `🔔 พบผู้เช่าลงทะเบียนใหม่ ${res.newRegistrationsCount} รายการ! (รออนุมัติทั้งหมด ${res.pendingRegistrationsCount} รายการ)`
-        );
-        setIsRegistrationOpen(true);
-      } else if (res.newPaymentsCount > 0) {
-        showToast(
-          `💳 พบแจ้งชำระเงินใหม่ ${res.newPaymentsCount} รายการ! (รอตรวจทั้งหมด ${res.pendingPaymentsCount} รายการ)`
+          `🔔 พบลงทะเบียนใหม่ ${res.newRegistrationsCount} รายการ และแจ้งโอนใหม่ ${res.newPaymentsCount} รายการ!${warnSuffix}`
         );
         setIsReconcileOpen(true);
+      } else if (res.newPaymentsCount > 0) {
+        showToast(
+          `💳 พบแจ้งชำระเงินใหม่ ${res.newPaymentsCount} รายการ! (รอตรวจทั้งหมด ${res.pendingPaymentsCount} รายการ)${warnSuffix}`
+        );
+        setIsReconcileOpen(true);
+      } else if (res.newRegistrationsCount > 0) {
+        showToast(
+          `🔔 พบผู้เช่าลงทะเบียนใหม่ ${res.newRegistrationsCount} รายการ! (รออนุมัติทั้งหมด ${res.pendingRegistrationsCount} รายการ)${warnSuffix}`
+        );
+        setIsRegistrationOpen(true);
       } else {
         showToast(
-          `✔ ดึงข้อมูลล่าสุดจาก Google Drive สำเร็จ (รออนุมัติเข้าพัก ${res.pendingRegistrationsCount} • รอตรวจสลิป ${res.pendingPaymentsCount})`
+          `✔ ดึงข้อมูลล่าสุดจาก Google Drive สำเร็จ (รออนุมัติเข้าพัก ${res.pendingRegistrationsCount} • รอตรวจสลิป ${res.pendingPaymentsCount})${warnSuffix}`
         );
       }
     } catch (err: any) {

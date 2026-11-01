@@ -195,9 +195,130 @@ function formatGvizCellValue(cell: any, colType?: string): string {
   return v === null || v === undefined ? '' : String(v).trim();
 }
 
+const DEFAULT_REGISTRATIONS_HEADERS = [
+  'ประทับเวลา',
+  'ชื่อ / Name',
+  'เบอร์โทร / Phone number',
+  'อีเมล / Email',
+  'หมายเลขห้อง (เก่า) / Unit (old)',
+  'วันที่ย้ายเข้า / Move-in date',
+  'หมายเหตุ / Notes',
+  'หมายเลขห้อง / Unit number',
+  'Approved'
+];
+
+const DEFAULT_PAYMENTS_HEADERS = [
+  'ประทับเวลา',
+  'วันที่โอน / Date of transfer',
+  'จำนวนเงิน / Amount paid',
+  'สลิป / Payslip',
+  'ชื่อผู้เช่า / Tenant name',
+  'หมายเลขห้อง (เก่า) / Unit (old)',
+  'ประเภทการชำระ / Payment category',
+  'หมายเลขห้อง / Unit number',
+  'เดือนที่ชำระ / Billing month',
+  'Status (สถานะ)',
+  'Notes (หมายเหตุ)',
+  'Verified amount',
+  'Bank ref/date',
+  'Verified by/on'
+];
+
+export function parseCsvText(csvText: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = '';
+  let inQuotes = false;
+  const s = csvText.replace(/^\uFEFF/, '');
+
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (s[i + 1] === '"') {
+          field += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        field += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      row.push(field.trim());
+      field = '';
+    } else if (ch === '\r' || ch === '\n') {
+      if (ch === '\r' && s[i + 1] === '\n') {
+        i++;
+      }
+      row.push(field.trim());
+      field = '';
+      if (row.some(cell => cell !== '')) {
+        rows.push(row);
+      }
+      row = [];
+    } else {
+      field += ch;
+    }
+  }
+
+  if (field !== '' || row.length > 0) {
+    row.push(field.trim());
+    if (row.some(cell => cell !== '')) {
+      rows.push(row);
+    }
+  }
+
+  return rows;
+}
+
+async function fetchSheetCsvRows(sheetId: string, accessToken?: string): Promise<string[][]> {
+  const params = [
+    'format=csv',
+    accessToken ? `access_token=${encodeURIComponent(accessToken)}` : '',
+    `_ts=${Date.now()}`
+  ]
+    .filter(Boolean)
+    .join('&');
+
+  const res = await fetch(
+    `https://docs.google.com/spreadsheets/d/${encodeURIComponent(sheetId)}/export?${params}`,
+    {
+      method: 'GET',
+      credentials: 'omit',
+      cache: 'no-store'
+    }
+  );
+
+  if (!res.ok) {
+    const err = new Error(`CSV export HTTP ${res.status}`) as any;
+    err.httpStatus = res.status;
+    throw err;
+  }
+
+  const contentType = (res.headers.get('content-type') || '').toLowerCase();
+  const text = await res.text();
+  const trimmed = text.trimStart();
+  if (contentType.includes('text/html') || trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html')) {
+    const err = new Error('Private Google Sheet (redirected to login HTML)') as any;
+    err.httpStatus = 403;
+    throw err;
+  }
+
+  return parseCsvText(text);
+}
+
+function looksLikeDataRowNotHeader(row: string[]): boolean {
+  const first = String(row[0] || '').trim();
+  if (!first) return false;
+  return /^\d{1,4}[-/]\d{1,2}[-/]\d{1,4}/.test(first);
+}
+
 function loadGvizJsonp(
   sheetId: string,
-  opts?: { accessToken?: string; sheetName?: string; timeoutMs?: number }
+  opts?: { accessToken?: string; sheetName?: string; timeoutMs?: number; fallbackHeaders?: string[] }
 ): Promise<string[][]> {
   return new Promise((resolve, reject) => {
     if (typeof window === 'undefined' || typeof document === 'undefined') {
@@ -251,16 +372,23 @@ function loadGvizJsonp(
         cols.map((col, idx) => formatGvizCellValue(r?.c?.[idx], col?.type))
       );
 
-      if (headerRow.every(h => !h) && dataRows.length > 0) {
-        resolve(dataRows);
+      if (headerRow.every(h => !h)) {
+        if (opts?.fallbackHeaders && opts.fallbackHeaders.length > 0) {
+          resolve([opts.fallbackHeaders, ...dataRows]);
+        } else {
+          resolve(dataRows);
+        }
+      } else if (looksLikeDataRowNotHeader(headerRow) && opts?.fallbackHeaders?.length) {
+        // gviz ate the first data row into cols[].label when Row 1 had owner notes/validations
+        resolve([opts.fallbackHeaders, headerRow, ...dataRows]);
       } else {
         resolve([headerRow, ...dataRows]);
       }
     };
 
+    // Omit headers=1 so Google gviz does NOT swallow Row 2 into cols[].label on sheets with owner validations
     const params = [
       `tqx=responseHandler:${cbName}`,
-      `headers=1`,
       opts?.sheetName ? `sheet=${encodeURIComponent(opts.sheetName)}` : '',
       opts?.accessToken ? `access_token=${encodeURIComponent(opts.accessToken)}` : '',
       `_ts=${Date.now()}`
@@ -356,8 +484,31 @@ export async function readSpreadsheetRowsResilient(
   sheetId: string,
   preferredTabs: string[],
   accessToken?: string,
-  connectedEmail?: string
+  connectedEmail?: string,
+  fallbackHeaders?: string[]
 ): Promise<string[][]> {
+  // 1. Try raw CSV export first (fast, zero header-swallowing or column-type mangling, CORS enabled)
+  try {
+    const csvRows = await fetchSheetCsvRows(sheetId, accessToken);
+    if (csvRows.length > 0) {
+      return csvRows;
+    }
+  } catch {
+    // Fall through to Sheets REST API / gviz JSONP
+  }
+
+  // Also try unauthenticated CSV export in case sheet is shared via link while accessToken lacked access
+  if (accessToken) {
+    try {
+      const publicCsvRows = await fetchSheetCsvRows(sheetId);
+      if (publicCsvRows.length > 0) {
+        return publicCsvRows;
+      }
+    } catch {
+      // Fall through
+    }
+  }
+
   if (accessToken) {
     try {
       return await fetchViaSheetsRestApi(sheetId, preferredTabs, accessToken);
@@ -367,14 +518,19 @@ export async function readSpreadsheetRowsResilient(
       }
       // Fallback to gviz JSONP with access_token (works even when sheets.googleapis.com is disabled on GCP project)
       try {
-        if (preferredTabs.length > 0) {
+        for (const tabName of preferredTabs) {
           try {
-            return await loadGvizJsonp(sheetId, { accessToken, sheetName: preferredTabs[0] });
+            const rows = await loadGvizJsonp(sheetId, {
+              accessToken,
+              sheetName: tabName,
+              fallbackHeaders
+            });
+            if (rows.length >= 2) return rows;
           } catch {
-            return await loadGvizJsonp(sheetId, { accessToken });
+            // Try next candidate tab
           }
         }
-        return await loadGvizJsonp(sheetId, { accessToken });
+        return await loadGvizJsonp(sheetId, { accessToken, fallbackHeaders });
       } catch (gvizErr: any) {
         if (err?.httpStatus === 403 || gvizErr?.gvizReason === 'access_denied') {
           throw new GoogleDriveAccessError(
@@ -391,14 +547,19 @@ export async function readSpreadsheetRowsResilient(
   }
 
   // Link-shared / public read via gviz JSONP (no OAuth token needed)
-  if (preferredTabs.length > 0) {
+  for (const tabName of preferredTabs) {
     try {
-      return await loadGvizJsonp(sheetId, { sheetName: preferredTabs[0], timeoutMs: 5000 });
+      const rows = await loadGvizJsonp(sheetId, {
+        sheetName: tabName,
+        timeoutMs: 5000,
+        fallbackHeaders
+      });
+      if (rows.length >= 2) return rows;
     } catch {
-      return await loadGvizJsonp(sheetId, { timeoutMs: 5000 });
+      // Try next candidate tab
     }
   }
-  return await loadGvizJsonp(sheetId, { timeoutMs: 5000 });
+  return await loadGvizJsonp(sheetId, { timeoutMs: 5000, fallbackHeaders });
 }
 
 // ——— Row Parsing Helpers (matching DashboardBridge.gs & Code.gs 100%) ———
@@ -617,7 +778,10 @@ export function parsePaymentsSheetRows(
   if (!rows || rows.length < 2) return out;
 
   const h = rows[0];
-  const unitCols = splitUnitCols(h, s => s.includes('หมายเลขห้อง') || /\bunit\b/.test(s));
+  const unitCols = splitUnitCols(
+    h,
+    s => s.includes('หมายเลขห้อง') || s.includes('ห้อง') || /\bunit\b/.test(s)
+  );
   const monthCols = colsWhere(h, s => s.includes('เดือนที่ชำระ') || s.includes('billing month'));
   const amountCols = colsWhere(h, s => s.includes('จำนวนเงิน') || s.includes('amount paid'));
   const dateCols = colsWhere(h, s => s.includes('วันที่โอน') || s.includes('date of transfer'));
@@ -633,10 +797,10 @@ export function parsePaymentsSheetRows(
     const row = rows[r] || [];
     const rawUnit = unitFromRow(row, unitCols);
     const amountRaw = amountCols.length > 0 ? row[amountCols[0]] : '';
-    if (!rawUnit && isBlank(amountRaw)) continue;
+    const slipUrl = slipCols.length > 0 ? String(row[slipCols[0]] || '').trim() : '';
+    if (!rawUnit && isBlank(amountRaw) && !slipUrl) continue;
 
-    const unit = canonicalUnit(rawUnit) || String(rawUnit || '').trim();
-    if (!unit) continue;
+    const unit = canonicalUnit(rawUnit) || String(rawUnit || '').trim() || 'ไม่ระบุห้อง';
 
     const amountBaht = toNumber(amountRaw);
     // Skip old Gate A dummy test row (unit 100 / 197500)
@@ -650,7 +814,6 @@ export function parsePaymentsSheetRows(
       dateCols.length > 0 && !isBlank(row[dateCols[0]])
         ? parseDateAndTime(row[dateCols[0]], tsParsed.date)
         : tsParsed;
-    const slipUrl = slipCols.length > 0 ? String(row[slipCols[0]] || '').trim() : '';
     const driveFileId = extractDriveFileId(slipUrl);
     const statusStr = statusCols.length > 0 ? String(row[statusCols[0]] || '').trim() : '';
     const status: ParsedSheetPayment['status'] =
@@ -725,8 +888,14 @@ export async function pullBothGoogleSheets(options: {
       // Try link-shared mode automatically before reporting an error!
       try {
         const [regRows, payRows] = await Promise.all([
-          readSpreadsheetRowsResilient(regSheetId, []),
-          readSpreadsheetRowsResilient(paySheetId, ['Payments', 'Form Responses 1'])
+          readSpreadsheetRowsResilient(regSheetId, [], undefined, undefined, DEFAULT_REGISTRATIONS_HEADERS),
+          readSpreadsheetRowsResilient(
+            paySheetId,
+            ['Payments', 'การตอบแบบฟอร์ม 1', 'Form Responses 1'],
+            undefined,
+            undefined,
+            DEFAULT_PAYMENTS_HEADERS
+          )
         ]);
         setLinkShareModeKnown(true);
         return {
@@ -751,12 +920,19 @@ export async function pullBothGoogleSheets(options: {
 
   // Fetch both sheets independently so if even one sheet is accessible, its items immediately appear!
   const [regResult, payResult] = await Promise.allSettled([
-    readSpreadsheetRowsResilient(regSheetId, [], authInfo?.accessToken, authInfo?.email),
+    readSpreadsheetRowsResilient(
+      regSheetId,
+      [],
+      authInfo?.accessToken,
+      authInfo?.email,
+      DEFAULT_REGISTRATIONS_HEADERS
+    ),
     readSpreadsheetRowsResilient(
       paySheetId,
-      ['Payments', 'Form Responses 1'],
+      ['Payments', 'การตอบแบบฟอร์ม 1', 'Form Responses 1'],
       authInfo?.accessToken,
-      authInfo?.email
+      authInfo?.email,
+      DEFAULT_PAYMENTS_HEADERS
     )
   ]);
 
@@ -766,8 +942,14 @@ export async function pullBothGoogleSheets(options: {
       // Also check if the user enabled link-sharing on the sheets
       try {
         const [regRows, payRows] = await Promise.all([
-          readSpreadsheetRowsResilient(regSheetId, []),
-          readSpreadsheetRowsResilient(paySheetId, ['Payments', 'Form Responses 1'])
+          readSpreadsheetRowsResilient(regSheetId, [], undefined, undefined, DEFAULT_REGISTRATIONS_HEADERS),
+          readSpreadsheetRowsResilient(
+            paySheetId,
+            ['Payments', 'การตอบแบบฟอร์ม 1', 'Form Responses 1'],
+            undefined,
+            undefined,
+            DEFAULT_PAYMENTS_HEADERS
+          )
         ]);
         setLinkShareModeKnown(true);
         return {
