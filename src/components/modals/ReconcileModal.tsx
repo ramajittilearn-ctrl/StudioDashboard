@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { FormSubmission, Invoice, PropertySettings, Room } from '../../types';
+import { FormSubmission, Invoice, PropertySettings, Room, TenantLookupTarget } from '../../types';
 import { formatBaht, getLatestRoomInvoice } from '../../lib/finance';
 import {
   X,
@@ -43,6 +43,8 @@ interface ReconcileModalProps {
   invoices: Invoice[];
   settings: PropertySettings;
   onRefreshState: () => void;
+  onOpenRoomDetail?: (roomNumber: string) => void;
+  onOpenTenantDetail?: (target: TenantLookupTarget) => void;
 }
 
 function extractDriveId(sub: FormSubmission): string {
@@ -76,7 +78,9 @@ export const ReconcileModal: React.FC<ReconcileModalProps> = ({
   rooms,
   invoices,
   settings,
-  onRefreshState
+  onRefreshState,
+  onOpenRoomDetail,
+  onOpenTenantDetail
 }) => {
   const [selectedSubId, setSelectedSubId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'pending' | 'history' | 'script' | 'manual'>('pending');
@@ -535,11 +539,29 @@ export const ReconcileModal: React.FC<ReconcileModalProps> = ({
                           <div className="bg-slate-900/90 rounded-lg p-3 border border-slate-800 space-y-1.5 text-xs">
                             <div className="flex justify-between">
                               <span className="text-slate-400">ห้องพัก:</span>
-                              <strong className="text-amber-300 font-semibold">ห้อง {currentSub.roomNumber}</strong>
+                              <button
+                                type="button"
+                                onClick={() => onOpenRoomDetail && onOpenRoomDetail(currentSub.roomNumber)}
+                                className="text-amber-300 font-semibold hover:underline cursor-pointer"
+                              >
+                                ห้อง {currentSub.roomNumber}
+                              </button>
                             </div>
                             <div className="flex justify-between">
                               <span className="text-slate-400">ชื่อผู้แจ้ง:</span>
-                              <span className="text-white font-medium">{currentSub.tenantName}</span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  onOpenTenantDetail &&
+                                  onOpenTenantDetail({
+                                    tenantName: currentSub.tenantName,
+                                    roomNumber: currentSub.roomNumber
+                                  })
+                                }
+                                className="text-white font-medium hover:text-emerald-300 hover:underline cursor-pointer"
+                              >
+                                {currentSub.tenantName}
+                              </button>
                             </div>
                             {currentSub.billingPeriod && (
                               <div className="flex justify-between">

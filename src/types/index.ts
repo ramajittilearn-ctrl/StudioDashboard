@@ -46,6 +46,10 @@ export interface Room {
   phone: string;
   email?: string;
   lineId?: string;
+  idCardNumber?: string;
+  licensePlate?: string;
+  emergencyContact?: string;
+  contractEndDate?: string;
   notes?: string;
   startDate?: string;
   parkingType: ParkingType;
@@ -171,7 +175,12 @@ export interface MoveOutArchive {
   roomNumber: string;
   tenantName: string;
   phone: string;
+  email?: string;
   lineId?: string;
+  idCardNumber?: string;
+  licensePlate?: string;
+  emergencyContact?: string;
+  notes?: string;
   moveInDate: string;
   moveOutDate: string;
   depositSatang: number;
@@ -185,6 +194,13 @@ export interface MoveOutArchive {
   netRefundSatang: number;
   deductionNote: string;
   createdAt: string;
+}
+
+export interface TenantLookupTarget {
+  tenantName: string;
+  roomNumber?: string;
+  registrationId?: string;
+  archiveId?: string;
 }
 
 export interface BackupSnapshot {

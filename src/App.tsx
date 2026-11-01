@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { AppState, Room } from './types';
+import { AppState, Room, TenantLookupTarget } from './types';
 import {
   fetchAppState,
   setClientCachedState,
@@ -17,6 +17,7 @@ import {
   updateInvoice,
   recordPayment,
   submitMoveOut,
+  updateRoomTenantDetails,
   addExpense,
   deleteExpense,
   sendLineNotification,
@@ -53,6 +54,8 @@ import { EditInvoiceModal } from './components/modals/EditInvoiceModal';
 import { ReconcileModal } from './components/modals/ReconcileModal';
 import { RegistrationModal } from './components/modals/RegistrationModal';
 import { BackupRecallModal } from './components/modals/BackupRecallModal';
+import { RoomDetailModal } from './components/modals/RoomDetailModal';
+import { TenantDetailModal } from './components/modals/TenantDetailModal';
 import { Check } from 'lucide-react';
 
 export default function App() {
@@ -68,6 +71,8 @@ export default function App() {
   const [selectedInvoiceId, setSelectedInvoiceId] = useState<string | undefined>(undefined);
 
   // Modal states
+  const [detailRoomNumber, setDetailRoomNumber] = useState<string | null>(null);
+  const [detailTenantTarget, setDetailTenantTarget] = useState<TenantLookupTarget | null>(null);
   const [moveInRoom, setMoveInRoom] = useState<Room | null>(null);
   const [reserveRoom, setReserveRoom] = useState<Room | null>(null);
   const [paymentInvoiceId, setPaymentInvoiceId] = useState<string | null>(null);
@@ -446,6 +451,20 @@ export default function App() {
     }
   };
 
+  const handleSaveTenantDetails = async (payload: any) => {
+    try {
+      const nextState = await updateRoomTenantDetails(payload);
+      await syncBothStores(nextState);
+      setDetailTenantTarget(prev =>
+        prev ? { ...prev, tenantName: payload.tenantName || prev.tenantName } : null
+      );
+      showToast(`บันทึกรายละเอียดผู้เช่าห้อง ${payload.roomNumber} เรียบร้อย`);
+    } catch (err: any) {
+      showToast('เกิดข้อผิดพลาดในการบันทึกข้อมูลผู้เช่า');
+      throw err;
+    }
+  };
+
   const handleAddExpense = async (payload: any) => {
     try {
       const nextState = await addExpense(payload);
@@ -584,6 +603,8 @@ export default function App() {
           <DashboardView
             state={state}
             onNavigateTab={setActiveTab}
+            onOpenRoomDetail={(rNum) => setDetailRoomNumber(rNum)}
+            onOpenTenantDetail={(target) => setDetailTenantTarget(target)}
             onOpenPaymentModal={(invId) => setPaymentInvoiceId(invId)}
             onViewInvoice={(rNum) => {
               const inv = getLatestRoomInvoice(state.invoices, rNum);
@@ -603,6 +624,8 @@ export default function App() {
         {activeTab === 'rooms' && (
           <RoomLiveBoard
             state={state}
+            onOpenRoomDetail={(rNum) => setDetailRoomNumber(rNum)}
+            onOpenTenantDetail={(target) => setDetailTenantTarget(target)}
             onOpenMoveIn={(rNum) => setMoveInRoom(state.rooms.find(r => r.roomNumber === rNum) || null)}
             onOpenReserve={(rNum) => setReserveRoom(state.rooms.find(r => r.roomNumber === rNum) || null)}
             onCancelReserve={handleCancelReserve}
@@ -627,6 +650,8 @@ export default function App() {
           <BulkMeterTable
             state={state}
             onCommitInvoices={handleCommitBulkMeters}
+            onOpenRoomDetail={(rNum) => setDetailRoomNumber(rNum)}
+            onOpenTenantDetail={(target) => setDetailTenantTarget(target)}
           />
         )}
 
@@ -636,6 +661,8 @@ export default function App() {
             state={state}
             selectedInvoiceId={selectedInvoiceId}
             onSelectInvoice={setSelectedInvoiceId}
+            onOpenRoomDetail={(rNum) => setDetailRoomNumber(rNum)}
+            onOpenTenantDetail={(target) => setDetailTenantTarget(target)}
             onOpenPayment={(invId) => setPaymentInvoiceId(invId)}
             onOpenEditInvoice={(invId) => setEditingInvoiceId(invId)}
             onSendLineNotify={handleSendLineNotify}
@@ -646,6 +673,8 @@ export default function App() {
         {activeTab === 'payments' && (
           <PaymentCenter
             state={state}
+            onOpenRoomDetail={(rNum) => setDetailRoomNumber(rNum)}
+            onOpenTenantDetail={(target) => setDetailTenantTarget(target)}
             onOpenPaymentModal={(invId) => setPaymentInvoiceId(invId)}
             onOpenEditInvoice={(invId) => setEditingInvoiceId(invId)}
             onViewInvoice={(rNum) => {
@@ -671,11 +700,57 @@ export default function App() {
 
         {/* Tab 7: Permanent Tenant Archives */}
         {activeTab === 'archive' && (
-          <TenantArchiveView archives={state.moveOutArchives || []} />
+          <TenantArchiveView
+            archives={state.moveOutArchives || []}
+            onOpenRoomDetail={(rNum) => setDetailRoomNumber(rNum)}
+            onOpenTenantDetail={(target) => setDetailTenantTarget(target)}
+          />
         )}
       </main>
 
       {/* Modals */}
+      <RoomDetailModal
+        roomNumber={detailRoomNumber}
+        state={state}
+        isOpen={Boolean(detailRoomNumber)}
+        onClose={() => setDetailRoomNumber(null)}
+        onSelectRoom={(rNum) => setDetailRoomNumber(rNum)}
+        onOpenTenantDetail={(target) => {
+          setDetailRoomNumber(null);
+          setDetailTenantTarget(target);
+        }}
+        onOpenMoveIn={(rNum) => setMoveInRoom(state.rooms.find(r => r.roomNumber === rNum) || null)}
+        onOpenReserve={(rNum) => setReserveRoom(state.rooms.find(r => r.roomNumber === rNum) || null)}
+        onCancelReserve={handleCancelReserve}
+        onMarkMaintenanceDone={handleMaintenanceDone}
+        onOpenPayment={(invId) => setPaymentInvoiceId(invId)}
+        onOpenMoveOut={(rNum) => setMoveOutRoom(state.rooms.find(r => r.roomNumber === rNum) || null)}
+        onViewLineBill={(rNum) => {
+          const inv = getLatestRoomInvoice(state.invoices, rNum);
+          if (inv) setSelectedInvoiceId(inv.id);
+          setActiveTab('invoices');
+        }}
+        onOpenRegistrationModal={() => setIsRegistrationOpen(true)}
+        onOpenReconcileModal={() => setIsReconcileOpen(true)}
+      />
+
+      <TenantDetailModal
+        target={detailTenantTarget}
+        state={state}
+        isOpen={Boolean(detailTenantTarget)}
+        onClose={() => setDetailTenantTarget(null)}
+        onOpenRoomDetail={(rNum) => {
+          setDetailTenantTarget(null);
+          setDetailRoomNumber(rNum);
+        }}
+        onSaveTenantDetails={handleSaveTenantDetails}
+        onOpenPayment={(invId) => setPaymentInvoiceId(invId)}
+        onViewLineBill={(rNum) => {
+          const inv = getLatestRoomInvoice(state.invoices, rNum);
+          if (inv) setSelectedInvoiceId(inv.id);
+          setActiveTab('invoices');
+        }}
+      />
       <MoveInModal
         room={moveInRoom}
         state={state}
@@ -731,6 +806,8 @@ export default function App() {
         invoices={state.invoices}
         settings={state.settings}
         onRefreshState={refreshServerState}
+        onOpenRoomDetail={(rNum) => setDetailRoomNumber(rNum)}
+        onOpenTenantDetail={(target) => setDetailTenantTarget(target)}
       />
 
       <RegistrationModal
@@ -740,6 +817,8 @@ export default function App() {
         rooms={state.rooms}
         settings={state.settings}
         onRefreshState={refreshServerState}
+        onOpenRoomDetail={(rNum) => setDetailRoomNumber(rNum)}
+        onOpenTenantDetail={(target) => setDetailTenantTarget(target)}
       />
 
       <BackupRecallModal

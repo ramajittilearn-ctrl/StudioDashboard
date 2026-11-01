@@ -2,6 +2,7 @@ import {
   AppState,
   FormSubmission,
   Invoice,
+  PackageTier,
   ParkingType,
   PaymentRecord,
   PropertySettings,
@@ -381,7 +382,13 @@ export async function submitMoveIn(payload: any): Promise<AppState> {
     rm.status = 'OCCUPIED';
     rm.tenantName = (tenantName || '').trim();
     rm.phone = (phone || '').trim();
+    rm.email = payload.email !== undefined ? String(payload.email || '').trim() : (rm.email || '');
     rm.lineId = (lineId || '').trim();
+    rm.idCardNumber = payload.idCardNumber !== undefined ? String(payload.idCardNumber || '').trim() : (rm.idCardNumber || '');
+    rm.licensePlate = payload.licensePlate !== undefined ? String(payload.licensePlate || '').trim() : (rm.licensePlate || '');
+    rm.emergencyContact = payload.emergencyContact !== undefined ? String(payload.emergencyContact || '').trim() : (rm.emergencyContact || '');
+    rm.contractEndDate = payload.contractEndDate !== undefined ? String(payload.contractEndDate || '').trim() : (rm.contractEndDate || '');
+    rm.notes = payload.notes !== undefined ? String(payload.notes || '').trim() : (rm.notes || '');
     rm.tier = tier || 'GOLD';
     rm.rentSatang = finalRentSatang;
     rm.depositSatang = depositSatang;
@@ -809,7 +816,12 @@ export async function submitMoveOut(payload: any): Promise<{ state: AppState; ne
       roomNumber,
       tenantName: rm.tenantName,
       phone: rm.phone,
+      email: rm.email,
       lineId: rm.lineId,
+      idCardNumber: rm.idCardNumber,
+      licensePlate: rm.licensePlate,
+      emergencyContact: rm.emergencyContact,
+      notes: rm.notes,
       moveInDate: rm.startDate || '2026-01-01',
       moveOutDate: state.simulatedDate,
       depositSatang: depositHeldSatang,
@@ -842,6 +854,10 @@ export async function submitMoveOut(payload: any): Promise<{ state: AppState; ne
     rm.phone = '';
     rm.email = '';
     rm.lineId = '';
+    rm.idCardNumber = '';
+    rm.licensePlate = '';
+    rm.emergencyContact = '';
+    rm.contractEndDate = '';
     rm.notes = '';
     rm.depositSatang = 0;
     rm.parkingType = 'NONE';
@@ -854,6 +870,64 @@ export async function submitMoveOut(payload: any): Promise<{ state: AppState; ne
 
   const nextState = await persistState(state);
   return { state: nextState, netRefundSatang };
+}
+
+export async function updateRoomTenantDetails(payload: {
+  roomNumber: string;
+  tenantName?: string;
+  phone?: string;
+  email?: string;
+  lineId?: string;
+  idCardNumber?: string;
+  licensePlate?: string;
+  emergencyContact?: string;
+  startDate?: string;
+  contractEndDate?: string;
+  tier?: PackageTier;
+  rentSatang?: number;
+  depositSatang?: number;
+  parkingType?: ParkingType;
+  parkingFeeSatang?: number;
+  notes?: string;
+}): Promise<AppState> {
+  const state = await getActiveState();
+  const rm = state.rooms.find(r => r.roomNumber === payload.roomNumber);
+  if (!rm) {
+    throw new Error(`ไม่พบห้อง ${payload.roomNumber}`);
+  }
+
+  const prevName = rm.tenantName;
+  if (payload.tenantName !== undefined) rm.tenantName = String(payload.tenantName).trim();
+  if (payload.phone !== undefined) rm.phone = String(payload.phone).trim();
+  if (payload.email !== undefined) rm.email = String(payload.email).trim();
+  if (payload.lineId !== undefined) rm.lineId = String(payload.lineId).trim();
+  if (payload.idCardNumber !== undefined) rm.idCardNumber = String(payload.idCardNumber).trim();
+  if (payload.licensePlate !== undefined) rm.licensePlate = String(payload.licensePlate).trim();
+  if (payload.emergencyContact !== undefined) rm.emergencyContact = String(payload.emergencyContact).trim();
+  if (payload.startDate !== undefined) rm.startDate = String(payload.startDate).trim();
+  if (payload.contractEndDate !== undefined) rm.contractEndDate = String(payload.contractEndDate).trim();
+  if (payload.tier !== undefined) rm.tier = payload.tier;
+  if (payload.rentSatang !== undefined && Number.isFinite(Number(payload.rentSatang))) {
+    rm.rentSatang = Math.max(0, Math.round(Number(payload.rentSatang)));
+  }
+  if (payload.depositSatang !== undefined && Number.isFinite(Number(payload.depositSatang))) {
+    rm.depositSatang = Math.max(0, Math.round(Number(payload.depositSatang)));
+  }
+  if (payload.parkingType !== undefined) rm.parkingType = payload.parkingType;
+  if (payload.parkingFeeSatang !== undefined && Number.isFinite(Number(payload.parkingFeeSatang))) {
+    rm.parkingFeeSatang = Math.max(0, Math.round(Number(payload.parkingFeeSatang)));
+  }
+  if (payload.notes !== undefined) rm.notes = String(payload.notes).trim();
+
+  if (rm.tenantName && prevName && rm.tenantName !== prevName) {
+    state.invoices.forEach(inv => {
+      if (inv.roomNumber === rm.roomNumber && inv.status !== 'ROLLED_OVER' && inv.balanceDueSatang > 0) {
+        inv.tenantName = rm.tenantName;
+      }
+    });
+  }
+
+  return persistState(state);
 }
 
 export async function addExpense(payload: {
@@ -1580,6 +1654,8 @@ export async function approveRegistration(
   rm.phone = reg.phone;
   rm.email = reg.email || rm.email || '';
   rm.lineId = (lineId !== undefined ? String(lineId) : (reg.lineId || '')).trim();
+  rm.idCardNumber = reg.idCardNumber || rm.idCardNumber || '';
+  rm.licensePlate = reg.licensePlate || rm.licensePlate || '';
   rm.notes = (notes !== undefined ? String(notes) : (reg.notes || '')).trim();
   rm.tier = finalTier;
   rm.rentSatang = finalRentSatang;

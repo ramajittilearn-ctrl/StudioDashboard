@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { AppState, Room } from '../types';
+import { AppState, TenantLookupTarget } from '../types';
 import { calcLateFeeSatang, calcMeterUnits, formatBaht } from '../lib/finance';
-import { Zap, Droplets, Car, CheckCircle2, Sparkles, AlertCircle } from 'lucide-react';
+import { Zap, Droplets, CheckCircle2, Sparkles } from 'lucide-react';
 
 interface BulkMeterTableProps {
   state: AppState;
   onCommitInvoices: (readings: any[]) => void;
+  onOpenRoomDetail: (roomNumber: string) => void;
+  onOpenTenantDetail: (target: TenantLookupTarget) => void;
 }
 
 interface LocalReading {
@@ -18,7 +20,12 @@ interface LocalReading {
   elecRoll: boolean;
 }
 
-export const BulkMeterTable: React.FC<BulkMeterTableProps> = ({ state, onCommitInvoices }) => {
+export const BulkMeterTable: React.FC<BulkMeterTableProps> = ({
+  state,
+  onCommitInvoices,
+  onOpenRoomDetail,
+  onOpenTenantDetail
+}) => {
   const { rooms, settings, invoices, simulatedDate } = state;
   const occupiedRooms = rooms.filter(r => r.status === 'OCCUPIED');
   const period = simulatedDate.substring(0, 7);
@@ -243,12 +250,26 @@ export const BulkMeterTable: React.FC<BulkMeterTableProps> = ({ state, onCommitI
                 <tr key={rm.roomNumber} className="hover:bg-slate-50 transition-colors">
                   {/* Room Number */}
                   <td className="py-2.5 px-3 font-extrabold text-slate-900 mono-num text-sm">
-                    {rm.roomNumber}
+                    <button
+                      type="button"
+                      onClick={() => onOpenRoomDetail(rm.roomNumber)}
+                      className="hover:text-emerald-700 hover:underline cursor-pointer"
+                      title={`คลิกดูรายละเอียดห้อง ${rm.roomNumber}`}
+                    >
+                      {rm.roomNumber}
+                    </button>
                   </td>
 
                   {/* Tenant */}
                   <td className="py-2.5 px-3">
-                    <div className="font-semibold text-slate-800">{rm.tenantName}</div>
+                    <button
+                      type="button"
+                      onClick={() => onOpenTenantDetail({ tenantName: rm.tenantName, roomNumber: rm.roomNumber })}
+                      className="font-semibold text-slate-800 hover:text-emerald-700 hover:underline block text-left cursor-pointer"
+                      title={`คลิกดูรายละเอียดทั้งหมดของ ${rm.tenantName}`}
+                    >
+                      {rm.tenantName}
+                    </button>
                     <div className="text-[11px] text-slate-500">{rm.tier} • {rm.phone}</div>
                   </td>
 

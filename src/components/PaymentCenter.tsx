@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
-import { AppState, Invoice } from '../types';
+import { AppState, TenantLookupTarget } from '../types';
 import { calcLateFeeSatang, formatBaht } from '../lib/finance';
 import { DollarSign, CheckCircle2, Clock, AlertTriangle, FileText, Paperclip, Edit3 } from 'lucide-react';
 
 interface PaymentCenterProps {
   state: AppState;
+  onOpenRoomDetail: (roomNumber: string) => void;
+  onOpenTenantDetail: (target: TenantLookupTarget) => void;
   onOpenPaymentModal: (invoiceId: string) => void;
   onViewInvoice: (roomNumber: string) => void;
   onOpenEditInvoice: (invoiceId: string) => void;
@@ -12,6 +14,8 @@ interface PaymentCenterProps {
 
 export const PaymentCenter: React.FC<PaymentCenterProps> = ({
   state,
+  onOpenRoomDetail,
+  onOpenTenantDetail,
   onOpenPaymentModal,
   onViewInvoice,
   onOpenEditInvoice
@@ -122,8 +126,24 @@ export const PaymentCenter: React.FC<PaymentCenterProps> = ({
                 <tr key={inv.id} className="hover:bg-slate-50 transition">
                   <td className="py-3 px-3 font-semibold mono-num">{inv.id}</td>
                   <td className="py-3 px-3">
-                    <div className="font-bold text-slate-900">
-                      ห้อง {inv.roomNumber} — {inv.tenantName}
+                    <div className="font-bold text-slate-900 flex flex-wrap items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => onOpenRoomDetail(inv.roomNumber)}
+                        className="hover:text-emerald-700 hover:underline cursor-pointer"
+                        title={`คลิกดูรายละเอียดห้อง ${inv.roomNumber}`}
+                      >
+                        ห้อง {inv.roomNumber}
+                      </button>
+                      <span>—</span>
+                      <button
+                        type="button"
+                        onClick={() => onOpenTenantDetail({ tenantName: inv.tenantName, roomNumber: inv.roomNumber })}
+                        className="hover:text-emerald-700 hover:underline cursor-pointer"
+                        title={`คลิกดูรายละเอียดทั้งหมดของ ${inv.tenantName}`}
+                      >
+                        {inv.tenantName}
+                      </button>
                     </div>
                     <div className="text-[11px] text-slate-500">
                       กำหนดชำระ {inv.dueDate} {inv.parkingFeeSatang > 0 ? `• จอดรถ ${formatBaht(inv.parkingFeeSatang)} บ.` : ''}
@@ -209,7 +229,23 @@ export const PaymentCenter: React.FC<PaymentCenterProps> = ({
                 className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex flex-wrap items-center justify-between gap-2 text-xs"
               >
                 <div>
-                  <span className="font-bold text-slate-900">ห้อง {st.roomNumber} — {st.tenantName}</span>
+                  <span className="font-bold text-slate-900 inline-flex flex-wrap items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => onOpenRoomDetail(st.roomNumber)}
+                      className="hover:text-emerald-700 hover:underline cursor-pointer"
+                    >
+                      ห้อง {st.roomNumber}
+                    </button>
+                    <span>—</span>
+                    <button
+                      type="button"
+                      onClick={() => onOpenTenantDetail({ tenantName: st.tenantName, roomNumber: st.roomNumber })}
+                      className="hover:text-emerald-700 hover:underline cursor-pointer"
+                    >
+                      {st.tenantName}
+                    </button>
+                  </span>
                   <span className="text-slate-500 ml-2">วันย้ายออก: {st.moveOutDate}</span>
                   <div className="text-[11px] text-slate-600 mt-0.5">
                     เงินประกันที่ถือไว้ ฿{formatBaht(st.depositHeldSatang)} หัก (น้ำ ฿{formatBaht(st.finalWaterSatang)} + ไฟ ฿{formatBaht(st.finalElectricSatang)} + ทำความสะอาด/เสียหาย ฿{formatBaht(st.cleaningFeeSatang + st.damageFeeSatang)} + ค้างชำระ ฿{formatBaht(st.arrearsSatang)})

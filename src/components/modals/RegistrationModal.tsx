@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { PackageTier, ParkingType, PropertySettings, Room, TenantRegistration } from '../../types';
+import { PackageTier, ParkingType, PropertySettings, Room, TenantLookupTarget, TenantRegistration } from '../../types';
 import { formatBaht } from '../../lib/finance';
 import {
   X,
@@ -42,6 +42,8 @@ interface RegistrationModalProps {
   rooms: Room[];
   settings: PropertySettings;
   onRefreshState: () => void;
+  onOpenRoomDetail?: (roomNumber: string) => void;
+  onOpenTenantDetail?: (target: TenantLookupTarget) => void;
 }
 
 export const RegistrationModal: React.FC<RegistrationModalProps> = ({
@@ -50,7 +52,9 @@ export const RegistrationModal: React.FC<RegistrationModalProps> = ({
   registrations,
   rooms,
   settings,
-  onRefreshState
+  onRefreshState,
+  onOpenRoomDetail,
+  onOpenTenantDetail
 }) => {
   const [selectedRegId, setSelectedRegId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'pending' | 'history' | 'simulate' | 'script'>('pending');
@@ -510,7 +514,20 @@ export const RegistrationModal: React.FC<RegistrationModalProps> = ({
                         <div className="bg-slate-900/90 rounded-lg p-3 border border-slate-800 space-y-2.5 text-xs">
                           <div>
                             <span className="text-slate-400 block text-[11px]">ชื่อ-นามสกุล (Name):</span>
-                            <span className="text-white font-bold text-sm">{currentReg.tenantName}</span>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onOpenTenantDetail &&
+                                onOpenTenantDetail({
+                                  tenantName: currentReg.tenantName,
+                                  roomNumber: currentReg.requestedRoomNumber,
+                                  registrationId: currentReg.id
+                                })
+                              }
+                              className="text-white font-bold text-sm hover:text-emerald-300 hover:underline text-left cursor-pointer"
+                            >
+                              {currentReg.tenantName}
+                            </button>
                           </div>
                           <div className="grid grid-cols-2 gap-2">
                             <div>
@@ -531,7 +548,13 @@ export const RegistrationModal: React.FC<RegistrationModalProps> = ({
                           <div className="grid grid-cols-2 gap-2 pt-1.5 border-t border-slate-800">
                             <div>
                               <span className="text-slate-400 block text-[11px]">หมายเลขห้องที่เลือก:</span>
-                              <span className="text-sky-300 font-bold text-sm">ห้อง {currentReg.requestedRoomNumber}</span>
+                              <button
+                                type="button"
+                                onClick={() => onOpenRoomDetail && onOpenRoomDetail(currentReg.requestedRoomNumber)}
+                                className="text-sky-300 font-bold text-sm hover:underline cursor-pointer"
+                              >
+                                ห้อง {currentReg.requestedRoomNumber}
+                              </button>
                             </div>
                             <div>
                               <span className="text-slate-400 block text-[11px]">วันที่ต้องการย้ายเข้า:</span>

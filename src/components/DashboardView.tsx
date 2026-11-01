@@ -1,5 +1,5 @@
 import React from 'react';
-import { AppState, Invoice } from '../types';
+import { AppState, Invoice, TenantLookupTarget } from '../types';
 import { calcLateFeeSatang, formatBaht, fromSatang } from '../lib/finance';
 import {
   TrendingUp,
@@ -25,6 +25,8 @@ import {
 interface DashboardViewProps {
   state: AppState;
   onNavigateTab: (tab: string) => void;
+  onOpenRoomDetail: (roomNumber: string) => void;
+  onOpenTenantDetail: (target: TenantLookupTarget) => void;
   onOpenPaymentModal: (invoiceId: string) => void;
   onViewInvoice: (roomNumber: string) => void;
   onSendLineNotify: (invoiceId: string) => Promise<any>;
@@ -38,6 +40,8 @@ interface DashboardViewProps {
 export const DashboardView: React.FC<DashboardViewProps> = ({
   state,
   onNavigateTab,
+  onOpenRoomDetail,
+  onOpenTenantDetail,
   onOpenPaymentModal,
   onViewInvoice,
   onSendLineNotify,
@@ -552,14 +556,30 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <div className="space-y-1.5">
               {topElectricRooms.map((inv, idx) => (
                 <div key={inv.id} className="flex items-center justify-between p-2 rounded-lg bg-slate-50 border border-slate-100 text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 text-[10px] font-bold flex items-center justify-center">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 text-[10px] font-bold flex items-center justify-center shrink-0">
                       #{idx + 1}
                     </span>
-                    <span className="font-bold text-slate-900">ห้อง {inv.roomNumber}</span>
-                    <span className="text-slate-500 truncate max-w-[110px] text-[11px]">{inv.tenantName}</span>
+                    <button
+                      type="button"
+                      onClick={() => onOpenRoomDetail(inv.roomNumber)}
+                      className="font-bold text-slate-900 hover:text-emerald-700 hover:underline shrink-0 cursor-pointer"
+                      title={`คลิกดูรายละเอียดห้อง ${inv.roomNumber}`}
+                    >
+                      ห้อง {inv.roomNumber}
+                    </button>
+                    {inv.tenantName && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenTenantDetail({ tenantName: inv.tenantName, roomNumber: inv.roomNumber })}
+                        className="text-slate-600 hover:text-emerald-700 hover:underline truncate max-w-[125px] text-[11px] font-medium cursor-pointer"
+                        title={`คลิกดูรายละเอียดทั้งหมดของ ${inv.tenantName}`}
+                      >
+                        {inv.tenantName}
+                      </button>
+                    )}
                   </div>
-                  <div className="text-right">
+                  <div className="text-right shrink-0">
                     <span className="font-bold text-amber-800 mono-num">{inv.elecUnits} หน่วย</span>
                     <span className="text-[10px] text-slate-400 block mono-num">฿{formatBaht(inv.elecSatang)}</span>
                   </div>
@@ -574,14 +594,30 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <div className="space-y-1.5">
               {topWaterRooms.map((inv, idx) => (
                 <div key={inv.id} className="flex items-center justify-between p-2 rounded-lg bg-slate-50 border border-slate-100 text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="w-5 h-5 rounded-full bg-sky-100 text-sky-700 text-[10px] font-bold flex items-center justify-center">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="w-5 h-5 rounded-full bg-sky-100 text-sky-700 text-[10px] font-bold flex items-center justify-center shrink-0">
                       #{idx + 1}
                     </span>
-                    <span className="font-bold text-slate-900">ห้อง {inv.roomNumber}</span>
-                    <span className="text-slate-500 truncate max-w-[110px] text-[11px]">{inv.tenantName}</span>
+                    <button
+                      type="button"
+                      onClick={() => onOpenRoomDetail(inv.roomNumber)}
+                      className="font-bold text-slate-900 hover:text-emerald-700 hover:underline shrink-0 cursor-pointer"
+                      title={`คลิกดูรายละเอียดห้อง ${inv.roomNumber}`}
+                    >
+                      ห้อง {inv.roomNumber}
+                    </button>
+                    {inv.tenantName && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenTenantDetail({ tenantName: inv.tenantName, roomNumber: inv.roomNumber })}
+                        className="text-slate-600 hover:text-emerald-700 hover:underline truncate max-w-[125px] text-[11px] font-medium cursor-pointer"
+                        title={`คลิกดูรายละเอียดทั้งหมดของ ${inv.tenantName}`}
+                      >
+                        {inv.tenantName}
+                      </button>
+                    )}
                   </div>
-                  <div className="text-right">
+                  <div className="text-right shrink-0">
                     <span className="font-bold text-sky-800 mono-num">{inv.waterUnits} หน่วย</span>
                     <span className="text-[10px] text-slate-400 block mono-num">฿{formatBaht(inv.waterSatang)}</span>
                   </div>
@@ -639,10 +675,24 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 {overdueInvoices.map(({ inv, lateSatang, netDueSatang }) => (
                   <tr key={inv.id} className="hover:bg-slate-50 transition">
                     <td className="py-2.5 px-3 font-extrabold text-slate-900 mono-num text-sm">
-                      ห้อง {inv.roomNumber}
+                      <button
+                        type="button"
+                        onClick={() => onOpenRoomDetail(inv.roomNumber)}
+                        className="hover:text-emerald-700 hover:underline cursor-pointer"
+                        title={`คลิกดูรายละเอียดห้อง ${inv.roomNumber}`}
+                      >
+                        ห้อง {inv.roomNumber}
+                      </button>
                     </td>
                     <td className="py-2.5 px-3">
-                      <div className="font-bold text-slate-800">{inv.tenantName}</div>
+                      <button
+                        type="button"
+                        onClick={() => onOpenTenantDetail({ tenantName: inv.tenantName, roomNumber: inv.roomNumber })}
+                        className="font-bold text-slate-800 hover:text-emerald-700 hover:underline block text-left cursor-pointer"
+                        title={`คลิกดูรายละเอียดทั้งหมดของ ${inv.tenantName}`}
+                      >
+                        {inv.tenantName}
+                      </button>
                       <div className="text-[11px] text-slate-500">{inv.tier} • กำหนดชำระ {inv.dueDate}</div>
                     </td>
                     <td className="py-2.5 px-3 text-right mono-num">

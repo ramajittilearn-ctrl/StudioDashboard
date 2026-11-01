@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
-import { AppState, Room } from '../types';
+import { AppState, TenantLookupTarget } from '../types';
 import { calcLateFeeSatang, formatBaht, getLatestRoomInvoice } from '../lib/finance';
-import { Search, Plus, Car, Bike, ShieldCheck, Wrench, Smartphone, DollarSign, LogOut } from 'lucide-react';
+import { Search, Car, Bike, Wrench, Smartphone, DollarSign, LogOut, ExternalLink } from 'lucide-react';
 
 interface RoomLiveBoardProps {
   state: AppState;
+  onOpenRoomDetail: (roomNumber: string) => void;
+  onOpenTenantDetail: (target: TenantLookupTarget) => void;
   onOpenMoveIn: (roomNumber: string) => void;
   onOpenReserve: (roomNumber: string) => void;
   onCancelReserve: (roomNumber: string) => void;
@@ -18,6 +20,8 @@ interface RoomLiveBoardProps {
 
 export const RoomLiveBoard: React.FC<RoomLiveBoardProps> = ({
   state,
+  onOpenRoomDetail,
+  onOpenTenantDetail,
   onOpenMoveIn,
   onOpenReserve,
   onCancelReserve,
@@ -232,9 +236,15 @@ export const RoomLiveBoard: React.FC<RoomLiveBoardProps> = ({
                       <div className="space-y-2">
                         {/* Header: Room Number & Status */}
                         <div className="flex items-center justify-between">
-                          <span className="text-base font-extrabold text-slate-900 mono-num">
-                            ห้อง {rm.roomNumber}
-                          </span>
+                          <button
+                            type="button"
+                            onClick={() => onOpenRoomDetail(rm.roomNumber)}
+                            className="text-base font-extrabold text-slate-900 hover:text-emerald-700 hover:bg-emerald-50 px-1.5 py-0.5 -ml-1.5 rounded-lg mono-num inline-flex items-center gap-1 transition cursor-pointer group"
+                            title={`คลิกเพื่อเปิดหน้าต่างรายละเอียดห้อง ${rm.roomNumber} และผู้เช่า`}
+                          >
+                            <span>ห้อง {rm.roomNumber}</span>
+                            <ExternalLink className="w-3 h-3 text-slate-400 group-hover:text-emerald-600 transition" />
+                          </button>
                           {statusBadge}
                         </div>
 
@@ -267,7 +277,19 @@ export const RoomLiveBoard: React.FC<RoomLiveBoardProps> = ({
                         <div className="text-xs text-slate-700 truncate font-medium">
                           {rm.tenantName ? (
                             <div className="truncate">
-                              <span>👤 {rm.tenantName}</span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  onOpenTenantDetail({
+                                    tenantName: rm.tenantName,
+                                    roomNumber: rm.roomNumber
+                                  })
+                                }
+                                className="font-bold text-slate-800 hover:text-emerald-700 hover:underline truncate max-w-full block text-left cursor-pointer transition"
+                                title={`คลิกเพื่อดูรายละเอียดทั้งหมดของ ${rm.tenantName}`}
+                              >
+                                👤 {rm.tenantName}
+                              </button>
                               {rm.phone && <span className="text-[10px] text-slate-400 block truncate mono-num">📞 {rm.phone}</span>}
                               {rm.email && <span className="text-[10px] text-slate-400 block truncate">✉️ {rm.email}</span>}
                             </div>

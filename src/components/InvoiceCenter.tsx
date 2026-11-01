@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { AppState, Invoice } from '../types';
+import { AppState, TenantLookupTarget } from '../types';
 import { calcLateFeeSatang, formatBaht } from '../lib/finance';
 import { generatePromptPayPayload, generateQrDataUrl } from '../lib/promptpay';
 import { LIVE_INFORM_PAGE_URL } from '../lib/bridgeScript';
@@ -9,6 +9,8 @@ interface InvoiceCenterProps {
   state: AppState;
   selectedInvoiceId?: string;
   onSelectInvoice: (id: string) => void;
+  onOpenRoomDetail: (roomNumber: string) => void;
+  onOpenTenantDetail: (target: TenantLookupTarget) => void;
   onOpenPayment: (invoiceId: string) => void;
   onOpenEditInvoice: (invoiceId: string) => void;
   onSendLineNotify: (invoiceId: string) => Promise<any>;
@@ -18,6 +20,8 @@ export const InvoiceCenter: React.FC<InvoiceCenterProps> = ({
   state,
   selectedInvoiceId,
   onSelectInvoice,
+  onOpenRoomDetail,
+  onOpenTenantDetail,
   onOpenPayment,
   onOpenEditInvoice,
   onSendLineNotify
@@ -164,19 +168,40 @@ export const InvoiceCenter: React.FC<InvoiceCenterProps> = ({
                 const isSelected = selectedInvoice && selectedInvoice.id === inv.id;
 
                 return (
-                  <button
+                  <div
                     key={inv.id}
-                    type="button"
                     onClick={() => onSelectInvoice(inv.id)}
-                    className={`w-full text-left px-4 py-3 flex items-center justify-between transition ${
+                    className={`w-full text-left px-4 py-3 flex items-center justify-between transition cursor-pointer ${
                       isSelected
                         ? 'bg-emerald-50 border-l-4 border-emerald-600'
                         : 'hover:bg-slate-50'
                     }`}
                   >
                     <div>
-                      <div className="font-bold text-xs text-slate-900">
-                        ห้อง {inv.roomNumber} — {inv.tenantName}
+                      <div className="font-bold text-xs text-slate-900 flex flex-wrap items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onOpenRoomDetail(inv.roomNumber);
+                          }}
+                          className="hover:text-emerald-700 hover:underline cursor-pointer"
+                          title={`คลิกดูรายละเอียดห้อง ${inv.roomNumber}`}
+                        >
+                          ห้อง {inv.roomNumber}
+                        </button>
+                        <span>—</span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onOpenTenantDetail({ tenantName: inv.tenantName, roomNumber: inv.roomNumber });
+                          }}
+                          className="hover:text-emerald-700 hover:underline cursor-pointer"
+                          title={`คลิกดูรายละเอียดทั้งหมดของ ${inv.tenantName}`}
+                        >
+                          {inv.tenantName}
+                        </button>
                       </div>
                       <div className="text-[11px] text-slate-500">
                         แพ็กเกจ {inv.tier} • ออกบิล {inv.issueDate}
@@ -190,7 +215,7 @@ export const InvoiceCenter: React.FC<InvoiceCenterProps> = ({
                         {netDue === 0 ? 'ชำระครบแล้ว' : inv.paidSatang > 0 ? 'แบ่งจ่ายบางส่วน' : 'รอชำระ'}
                       </div>
                     </div>
-                  </button>
+                  </div>
                 );
               })}
             </div>
@@ -227,10 +252,27 @@ export const InvoiceCenter: React.FC<InvoiceCenterProps> = ({
                       </div>
                     </div>
                     <div className="text-right">
-                      <span className="px-2.5 py-1 rounded-lg bg-slate-900 text-white font-extrabold text-sm mono-num">
+                      <button
+                        type="button"
+                        onClick={() => onOpenRoomDetail(selectedInvoice.roomNumber)}
+                        className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-emerald-700 text-white font-extrabold text-sm mono-num transition cursor-pointer"
+                        title={`คลิกดูรายละเอียดห้อง ${selectedInvoice.roomNumber}`}
+                      >
                         ห้อง {selectedInvoice.roomNumber}
-                      </span>
-                      <div className="text-[11px] text-slate-700 mt-1 font-semibold">{selectedInvoice.tenantName}</div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onOpenTenantDetail({
+                            tenantName: selectedInvoice.tenantName,
+                            roomNumber: selectedInvoice.roomNumber
+                          })
+                        }
+                        className="text-[11px] text-slate-700 hover:text-emerald-700 hover:underline mt-1 font-semibold block ml-auto cursor-pointer"
+                        title={`คลิกดูรายละเอียดทั้งหมดของ ${selectedInvoice.tenantName}`}
+                      >
+                        {selectedInvoice.tenantName}
+                      </button>
                     </div>
                   </div>
 
@@ -470,10 +512,20 @@ export const InvoiceCenter: React.FC<InvoiceCenterProps> = ({
                       </div>
                     </div>
                     <div className="text-right">
-                      <span className="px-2 py-0.5 rounded bg-slate-900 text-white font-extrabold text-xs mono-num">
+                      <button
+                        type="button"
+                        onClick={() => onOpenRoomDetail(inv.roomNumber)}
+                        className="px-2 py-0.5 rounded bg-slate-900 hover:bg-emerald-700 text-white font-extrabold text-xs mono-num transition cursor-pointer"
+                      >
                         ห้อง {inv.roomNumber}
-                      </span>
-                      <div className="text-[11px] text-slate-700 font-semibold mt-0.5">{inv.tenantName}</div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onOpenTenantDetail({ tenantName: inv.tenantName, roomNumber: inv.roomNumber })}
+                        className="text-[11px] text-slate-700 hover:text-emerald-700 hover:underline font-semibold mt-0.5 block ml-auto cursor-pointer"
+                      >
+                        {inv.tenantName}
+                      </button>
                     </div>
                   </div>
 

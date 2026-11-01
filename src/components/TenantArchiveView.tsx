@@ -1,15 +1,20 @@
 import React, { useState } from 'react';
-import { MoveOutArchive } from '../types';
+import { MoveOutArchive, TenantLookupTarget } from '../types';
 import { formatBaht } from '../lib/finance';
-import { Search, Archive, UserCheck, Calendar, Zap, Droplets, ShieldCheck, FileText, Phone, MessageSquare } from 'lucide-react';
+import { Search, Archive, Calendar, Zap, Droplets, Phone, MessageSquare } from 'lucide-react';
 
 interface TenantArchiveViewProps {
   archives: MoveOutArchive[];
+  onOpenRoomDetail: (roomNumber: string) => void;
+  onOpenTenantDetail: (target: TenantLookupTarget) => void;
 }
 
-export const TenantArchiveView: React.FC<TenantArchiveViewProps> = ({ archives }) => {
+export const TenantArchiveView: React.FC<TenantArchiveViewProps> = ({
+  archives,
+  onOpenRoomDetail,
+  onOpenTenantDetail
+}) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedArchive, setSelectedArchive] = useState<MoveOutArchive | null>(null);
 
   const filtered = archives.filter(a =>
     a.roomNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -71,11 +76,29 @@ export const TenantArchiveView: React.FC<TenantArchiveViewProps> = ({ archives }
               <div>
                 <div className="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
                   <div className="flex items-center gap-2">
-                    <span className="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 font-bold text-xs flex items-center justify-center mono-num">
+                    <button
+                      type="button"
+                      onClick={() => onOpenRoomDetail(item.roomNumber)}
+                      className="w-7 h-7 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/20 font-bold text-xs flex items-center justify-center mono-num cursor-pointer transition"
+                      title={`คลิกดูรายละเอียดห้อง ${item.roomNumber}`}
+                    >
                       {item.roomNumber}
-                    </span>
+                    </button>
                     <div>
-                      <h4 className="font-bold text-sm text-white">{item.tenantName}</h4>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onOpenTenantDetail({
+                            tenantName: item.tenantName,
+                            roomNumber: item.roomNumber,
+                            archiveId: item.id
+                          })
+                        }
+                        className="font-bold text-sm text-white hover:text-emerald-300 hover:underline text-left cursor-pointer"
+                        title={`คลิกดูรายละเอียดทั้งหมดของ ${item.tenantName}`}
+                      >
+                        {item.tenantName}
+                      </button>
                       <div className="text-[11px] text-slate-400 flex items-center gap-2 mt-0.5">
                         {item.phone && (
                           <span className="flex items-center gap-0.5">
