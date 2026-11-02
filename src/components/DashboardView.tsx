@@ -1,6 +1,9 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { AppState, Invoice, TenantLookupTarget } from '../types';
 import { calcLateFeeSatang, formatBaht, fromSatang } from '../lib/finance';
+const PronteraDormitory3D = lazy(() =>
+  import('./PronteraDormitory3D').then(m => ({ default: m.PronteraDormitory3D }))
+);
 import {
   TrendingUp,
   DollarSign,
@@ -222,6 +225,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </button>
         </div>
       )}
+
+      {/* 3D Prontera Dormitory Dashboard (Default View) */}
+      <Suspense
+        fallback={
+          <div className="h-[680px] rounded-3xl bg-slate-900 text-slate-300 flex items-center justify-center text-sm shadow-xl border border-slate-800">
+            กำลังโหลดโมเดล 3D อาคาร Prontera...
+          </div>
+        }
+      >
+        <PronteraDormitory3D
+          state={state}
+          onOpenRoomDetail={onOpenRoomDetail}
+        />
+      </Suspense>
 
       {/* 1. Header Banner & Welcome */}
       <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 rounded-2xl p-5 sm:p-6 text-white shadow-xl relative overflow-hidden">

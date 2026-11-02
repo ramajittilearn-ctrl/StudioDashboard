@@ -39,9 +39,9 @@ export const RoomLiveBoard: React.FC<RoomLiveBoardProps> = ({
   const [search, setSearch] = useState<string>('');
   const [viewMode, setViewModeState] = useState<'3D' | '2D'>(() => {
     try {
-      return localStorage.getItem('roomBoardViewMode') === '3D' ? '3D' : '2D';
+      return localStorage.getItem('roomBoardViewMode') === '2D' ? '2D' : '3D';
     } catch {
-      return '2D';
+      return '3D';
     }
   });
   const setViewMode = (mode: '3D' | '2D') => {
