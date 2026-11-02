@@ -20,3 +20,4 @@ service-account*.json
 *firebase-adminsdk*.json
 *.pem
 *.key
+node_modules

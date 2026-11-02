@@ -1,7 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, Suspense, lazy } from 'react';
 import { AppState, TenantLookupTarget } from '../types';
 import { calcLateFeeSatang, formatBaht, getLatestRoomInvoice } from '../lib/finance';
-import { Search, Car, Bike, Wrench, Smartphone, DollarSign, LogOut, ExternalLink } from 'lucide-react';
+import { Search, Car, Bike, Wrench, Smartphone, DollarSign, LogOut, ExternalLink, Box, LayoutGrid } from 'lucide-react';
+const PronteraDormitory3D = lazy(() =>
+  import('./PronteraDormitory3D').then(m => ({ default: m.PronteraDormitory3D }))
+);
 
 interface RoomLiveBoardProps {
   state: AppState;
@@ -34,6 +37,21 @@ export const RoomLiveBoard: React.FC<RoomLiveBoardProps> = ({
 }) => {
   const [filter, setFilter] = useState<string>('ALL');
   const [search, setSearch] = useState<string>('');
+  const [viewMode, setViewModeState] = useState<'3D' | '2D'>(() => {
+    try {
+      return localStorage.getItem('roomBoardViewMode') === '3D' ? '3D' : '2D';
+    } catch {
+      return '2D';
+    }
+  });
+  const setViewMode = (mode: '3D' | '2D') => {
+    setViewModeState(mode);
+    try {
+      localStorage.setItem('roomBoardViewMode', mode);
+    } catch {
+      // ignore storage errors
+    }
+  };
 
   const getRoomInvoice = (roomNumber: string) => {
     return getLatestRoomInvoice(state.invoices, roomNumber);
@@ -45,6 +63,35 @@ export const RoomLiveBoard: React.FC<RoomLiveBoardProps> = ({
     <div className="space-y-5 no-print">
       {/* Top Filter and Actions Toolbar */}
       <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-3">
+        {/* Left: View Mode Toggle (3D vs 2D) */}
+        <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl border border-slate-200">
+          <button
+            type="button"
+            onClick={() => setViewMode('3D')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+              viewMode === '3D'
+                ? 'bg-slate-900 text-white shadow-sm'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white'
+            }`}
+          >
+            <Box className="w-3.5 h-3.5" />
+            <span>🏛️ อาคาร 3D Prontera</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('2D')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+              viewMode === '2D'
+                ? 'bg-slate-900 text-white shadow-sm'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white'
+            }`}
+          >
+            <LayoutGrid className="w-3.5 h-3.5" />
+            <span>📋 ตาราง 2D ปกติ</span>
+          </button>
+        </div>
+
+        {/* Center: Status Filters (visible in 2D mode or quick stats) */}
         <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
@@ -130,9 +177,21 @@ export const RoomLiveBoard: React.FC<RoomLiveBoardProps> = ({
         </div>
       </div>
 
-      {/* Floors 1, 2, 3 Grid */}
-      <div className="space-y-6">
-        {floors.map(floorNum => {
+      {/* Main View: 3D Prontera Village OR 2D Floor Grid */}
+      {viewMode === '3D' ? (
+        <Suspense
+          fallback={
+            <div className="h-[680px] rounded-3xl bg-slate-900 text-slate-300 flex items-center justify-center text-sm">
+              กำลังโหลดโมเดล 3D...
+            </div>
+          }
+        >
+          <PronteraDormitory3D state={state} onOpenRoomDetail={onOpenRoomDetail} />
+        </Suspense>
+      ) : (
+        /* Floors 1, 2, 3 Grid (2D Standard Board) */
+        <div className="space-y-6">
+          {floors.map(floorNum => {
           const floorRooms = state.rooms.filter(rm => {
             if (rm.floor !== floorNum) return false;
             const inv = getRoomInvoice(rm.roomNumber);
@@ -414,7 +473,8 @@ export const RoomLiveBoard: React.FC<RoomLiveBoardProps> = ({
             </div>
           );
         })}
-      </div>
+        </div>
+      )}
     </div>
   );
 };
